@@ -1,0 +1,81 @@
+{
+    "version": 2,
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "LI_BUILD_TESTS": "ON",
+                "LI_BUILD_BENCH": "OFF"
+            }
+        },
+        {
+            "name": "debug",
+            "displayName": "Debug (invariant checks ON)",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "LI_INVARIANT_CHECKS": "ON"
+            }
+        },
+        {
+            "name": "relwithdebinfo",
+            "displayName": "RelWithDebInfo (for profiling)",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -march=x86-64-v3"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release (x86-64-v3 baseline)",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG -march=x86-64-v3",
+                "LI_BUILD_BENCH": "ON"
+            }
+        },
+        {
+            "name": "release-avx512",
+            "displayName": "Release + AVX-512 (x86-64-v4)",
+            "inherits": "release",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG -march=x86-64-v4"
+            }
+        },
+        {
+            "name": "ci",
+            "displayName": "CI (debug + warnings as errors)",
+            "inherits": "debug",
+            "cacheVariables": {
+                "LI_WERROR": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "relwithdebinfo",
+            "configurePreset": "relwithdebinfo"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "release-avx512",
+            "configurePreset": "release-avx512"
+        },
+        {
+            "name": "ci",
+            "configurePreset": "ci"
+        }
+    ]
+}
