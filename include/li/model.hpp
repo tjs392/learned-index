@@ -11,6 +11,8 @@ struct Model {
     double beta; 
 };
 
+// x,y are segment local
+// so x = key - key_low, y = local rank
 struct Moments {
     uint64_t n;
     double sum_x;
@@ -34,9 +36,27 @@ struct Moments {
         return Model{ 0.0, m.sum_y / static_cast<double>(m.n) };
     }
 
-    double alpha = (m.n * m.sum_xy - m.sum_x * m.sum_y) / d;
+    double alpha = (static_cast<double>(m.n) * m.sum_xy - m.sum_x * m.sum_y) / d;
     double beta = (m.sum_y - alpha * m.sum_x) / static_cast<double>(m.n);
     return Model{ alpha, beta };
+}
+
+// Predicts the position of the key relative to the segment's start
+// within error bounds (epsilon)
+[[nodiscard]] inline Pos predict(Model m, Key k, Key key_low) {
+    LI_ASSERT(k >= key_low);
+
+    // segment key low offset
+    double x = static_cast<double>(k - key_low);
+    double p = m.alpha * x + m.beta;
+    if (p < 0.0) p = 0.0;
+    return static_cast<Pos>(p);
+}
+
+// signed true distance from the line
+[[nodiscard]] inline double residual(Model m, Key key, Key key_low, uint64_t true_rank) {
+    LI_ASSERT(key >= key_low);
+    return true_rank - (static_cast<double>(key - key_low) * m.alpha + m.beta);
 }
 
 }
