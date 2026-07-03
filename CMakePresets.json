@@ -77,5 +77,14 @@
             "name": "ci",
             "configurePreset": "ci"
         }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
     ]
 }

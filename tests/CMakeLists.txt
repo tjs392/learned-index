@@ -11,6 +11,7 @@ FetchContent_MakeAvailable(googletest)
 
 add_executable(li_tests
   test_status.cpp
+  test_model.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li
