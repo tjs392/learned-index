@@ -196,7 +196,7 @@ private:
     Moments moments_{0, 0.0, 0.0, 0.0, 0.0 };
 };
 
-std::vector<SegmentSpec> segment_stream(const std::vector<Key>& keys, double epsilon) {
+inline std::vector<SegmentSpec> segment_stream(const std::vector<Key>& keys, double epsilon) {
     std::vector<SegmentSpec> specs;
     if (keys.empty()) return specs;
 
