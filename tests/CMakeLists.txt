@@ -14,6 +14,7 @@ add_executable(li_tests
   test_model.cpp
   test_segmentation.cpp
   test_index.cpp
+  test_range.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li

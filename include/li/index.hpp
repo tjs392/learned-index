@@ -23,9 +23,42 @@ struct SegmentDescriptor {
     size_t count;
 };
 
+class RangeView {
+public:
+    // Custom iterate for PMA gapped arrays (currently just works like a normal iterator)
+    class iterator {
+    public:
+        using iterator_category = std::forward_iterator_tag;
+        using value_type        = Key;
+        using difference_type    = std::ptrdiff_t;
+        using pointer           = const Key*;
+        using reference         = const Key&;
+
+        explicit iterator(const Key* p) : p_(p) {}
+
+        reference operator*() const { return *p_; } 
+        iterator& operator++() { ++p_; return *this; }
+
+        bool operator!=(const iterator& o) const { return p_ != o.p_; }
+        bool operator==(const iterator& o) const { return p_ == o.p_; }
+    
+    private:
+        const Key* p_;
+    };
+
+    RangeView(const Key* b, const Key* e) : begin_(b), end_(e) {}
+
+    iterator begin() const { return iterator(begin_); }
+    iterator end() const { return iterator(end_); }
+    bool empty() const { return begin_ == end_; }
+    size_t size() const { return static_cast<size_t>(end_ - begin_); }
+
+private:
+    const Key* begin_;
+    const Key* end_;
+};
 
 class Index {
-
 public:
 
     Index(double epsilon) : epsilon_(epsilon) {}
@@ -85,27 +118,49 @@ public:
     // Returns the first match it finds
     Result<uint64_t> point_lookup(Key key) const {
         if (keys_.empty()) return Status::not_found;
-
         const SegmentDescriptor& d = mapping_table_[find_descriptor(key)];
-        
         if (key < d.key_low) return Status::not_found;
-        
-        const Pos local_prediction = predict(d.model, key, d.key_low);
 
-        const uint64_t eps_ceil = static_cast<uint64_t>(std::ceil(epsilon_));
-        const uint64_t low = (local_prediction > eps_ceil) ? (local_prediction - eps_ceil) : 0;
+        auto [lo, hi] = search_window(key);
+        const auto found = std::lower_bound(keys_.begin() + lo, keys_.begin() + hi, key);
 
-        uint64_t high = local_prediction + eps_ceil + 1;
-        if (high > d.count) high = d.count;
-
-        const auto slice_begin = keys_.begin() + d.base_rank + low;
-        const auto slice_end = keys_.begin() + d.base_rank + high;
-        const auto found = std::lower_bound(slice_begin, slice_end, key);
-        if (found != slice_end && *found == key) {
+        if (found != keys_.begin() + hi && *found == key) {
             return static_cast<uint64_t>(found - keys_.begin());
         }
-        
+
         return Status::not_found;
+    }
+
+    // TODO: no model narrowing, just plain binary search
+    // this works for now - but in the future need to implement model narrowing steps
+    // O(logn) -> O(logepsilon)
+    RangeView range_lookup(Key low, Key high) const {
+        if (keys_.empty() || low > high) {
+            return RangeView(keys_.data(), keys_.data());
+        }
+        auto start = std::lower_bound(keys_.begin(), keys_.end(), low);
+        auto end   = std::upper_bound(keys_.begin(), keys_.end(), high);
+        const uint64_t si = static_cast<uint64_t>(start - keys_.begin());
+        const uint64_t ei = static_cast<uint64_t>(end   - keys_.begin());
+        if (si >= ei) {
+            return RangeView(keys_.data(), keys_.data());
+        }
+        return RangeView(keys_.data() + si, keys_.data() + ei);
+    }
+
+    std::pair<uint64_t, uint64_t> search_window(Key key) const {
+        const SegmentDescriptor& d = mapping_table_[find_descriptor(key)];
+
+        const Pos local_pred = predict(d.model, key, d.key_low);
+
+        const uint64_t eps_ceil = static_cast<uint64_t>(std::ceil(epsilon_));
+        const uint64_t low  = (local_pred > eps_ceil) ? (local_pred - eps_ceil) : 0;
+
+        uint64_t high = local_pred + eps_ceil + 1;
+
+        if (high > d.count) high = d.count;
+        
+        return { d.base_rank + low, d.base_rank + high };
     }
 
     const std::vector<SegmentDescriptor>& mapping_table_for_test() const {
