@@ -43,14 +43,14 @@ struct Moments {
 
 // Predicts the position of the key relative to the segment's start
 // within error bounds (epsilon)
-[[nodiscard]] inline Pos predict(Model m, Key k, Key key_low) {
+[[nodiscard]] inline Rank predict(Model m, Key k, Key key_low) {
     LI_ASSERT(k >= key_low);
 
     // segment key low offset
     double x = static_cast<double>(k - key_low);
     double p = m.alpha * x + m.beta;
     if (p < 0.0) p = 0.0;
-    return static_cast<Pos>(p);
+    return static_cast<Rank>(p);
 }
 
 // signed true distance from the line

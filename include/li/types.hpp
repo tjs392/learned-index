@@ -3,5 +3,5 @@
 
 namespace li {
     using Key = std::uint64_t;
-    using Pos = std::uint64_t;
+    using Rank = std::uint64_t;
 }

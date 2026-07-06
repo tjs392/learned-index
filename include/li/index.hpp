@@ -132,26 +132,30 @@ public:
     }
 
     // TODO: no model narrowing, just plain binary search
-    // this works for now - but in the future need to implement model narrowing steps
+    // this works for now  but in the future need to implement model narrowing steps
     // O(logn) -> O(logepsilon)
     RangeView range_lookup(Key low, Key high) const {
         if (keys_.empty() || low > high) {
             return RangeView(keys_.data(), keys_.data());
         }
+
         auto start = std::lower_bound(keys_.begin(), keys_.end(), low);
-        auto end   = std::upper_bound(keys_.begin(), keys_.end(), high);
+        auto end = std::upper_bound(keys_.begin(), keys_.end(), high);
+
         const uint64_t si = static_cast<uint64_t>(start - keys_.begin());
-        const uint64_t ei = static_cast<uint64_t>(end   - keys_.begin());
+        const uint64_t ei = static_cast<uint64_t>(end - keys_.begin());
+
         if (si >= ei) {
             return RangeView(keys_.data(), keys_.data());
         }
+
         return RangeView(keys_.data() + si, keys_.data() + ei);
     }
 
     std::pair<uint64_t, uint64_t> search_window(Key key) const {
         const SegmentDescriptor& d = mapping_table_[find_descriptor(key)];
 
-        const Pos local_pred = predict(d.model, key, d.key_low);
+        const Rank local_pred = predict(d.model, key, d.key_low);
 
         const uint64_t eps_ceil = static_cast<uint64_t>(std::ceil(epsilon_));
         const uint64_t low  = (local_pred > eps_ceil) ? (local_pred - eps_ceil) : 0;
