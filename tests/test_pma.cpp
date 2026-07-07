@@ -191,4 +191,47 @@ TEST(PmaRankStability, RanksTrackSortedOrderAcrossRebalance) {
     }
 }
 
+TEST(PmaFindIn, FindsWithinFullWindow) {
+    Block b = make_block({10, 20, 30, 40, 50});
+    std::size_t lo = b.slot_of_rank(0);
+    std::size_t hi = b.slot_of_rank(b.size() - 1);
+    for (Key k : {10, 20, 30, 40, 50}) {
+        auto s = b.find_in(k, lo, hi);
+        ASSERT_TRUE(s.has_value());
+        EXPECT_EQ(b.key_at(*s), k);
+    }
+    for (Key k : {5, 25, 55}) EXPECT_FALSE(b.find_in(k, lo, hi).has_value());
+}
+
+TEST(PmaFindIn, RespectsWindowBounds) {
+    Block b = make_block({10, 20, 30, 40, 50});
+    std::size_t lo = b.slot_of_rank(1), hi = b.slot_of_rank(3);
+    EXPECT_TRUE(b.find_in(30, lo, hi).has_value());
+    EXPECT_FALSE(b.find_in(10, lo, hi).has_value());
+    EXPECT_FALSE(b.find_in(50, lo, hi).has_value());
+}
+
+TEST(PmaFindIn, SingleRankWindowInclusive) {
+    Block b = make_block({10, 20, 30, 40, 50});
+    std::size_t s2 = b.slot_of_rank(2);
+    auto s = b.find_in(30, s2, s2);
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(b.key_at(*s), 30u);
+    EXPECT_FALSE(b.find_in(20, s2, s2).has_value());
+    EXPECT_FALSE(b.find_in(40, s2, s2).has_value());
+}
+
+TEST(PmaFindIn, WithGapsAfterInserts) {
+    Block b = make_block({});
+    for (Key k = 0; k < 500; ++k) b.insert(k * 2, k * 2);
+    b.check_invariants();
+    Rank r = 100;
+    std::size_t lo = b.slot_of_rank(r - 3), hi = b.slot_of_rank(r + 3);
+    auto s = b.find_in(200, lo, hi);
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(b.key_at(*s), 200u);
+    EXPECT_FALSE(b.find_in(201, lo, hi).has_value());
+    EXPECT_FALSE(b.find_in(220, lo, hi).has_value());
+}
+
 }

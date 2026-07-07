@@ -38,6 +38,7 @@ public:
         b.keys_.assign(b.capacity_, Key{});
         b.payloads_.assign(b.capacity_, Payload{});
         b.bits_.assign((b.capacity_ + 63) >> 6, 0);
+        b.fen_.assign(b.num_words() + 1, 0);
         b.count_ = n;
         b.spread(0, b.capacity_, keys, payloads);
         return b;
@@ -49,21 +50,23 @@ public:
 
     Rank local_rank(std::size_t slot) const {
         if (slot >= capacity_) return count_;
-        std::size_t w = slot >> 6, b = slot & 63, r = 0;
-        for (std::size_t i = 0; i < w; ++i) r += std::popcount(bits_[i]);
+        std::size_t w = slot >> 6, b = slot & 63;
+        Rank r = fen_prefix(w);
         r += std::popcount(bits_[w] & ((b == 0) ? 0ull : ((1ull << b) - 1)));
         return r;
     }
 
     std::size_t slot_of_rank(Rank r) const {
         if (r >= count_) return capacity_;
-        std::size_t seen = 0;
-        for (std::size_t i = 0; i < num_words(); ++i) {
-            std::size_t c = std::popcount(bits_[i]);
-            if (seen + c > r) return (i << 6) + select_in_word(bits_[i], r - seen);
-            seen += c;
+        std::size_t n = num_words(), pos = 0;
+        Rank rem = r;
+        for (std::size_t pw = std::bit_floor(n); pw; pw >>= 1) {
+            if (pos + pw <= n && fen_[pos + pw] <= rem) {
+                pos += pw;
+                rem -= fen_[pos];
+            }
         }
-        return capacity_;
+        return (pos << 6) + select_in_word(bits_[pos], rem);
     }
 
     Key key_at(std::size_t slot) const { return keys_[slot]; }
@@ -93,6 +96,20 @@ public:
         return std::nullopt;
     }
 
+    // Log(epsilon) 
+    // TODO: Do some tests, since this is linear scan, but since epsilon in 
+    // a small constant, I think linear is faster than binary or expionential
+    // Unless we do some branch free binary search... but that's for another time
+    std::optional<std::size_t> find_in(Key key, std::size_t lo_slot, std::size_t hi_slot) const {
+        LI_ASSERT(lo_slot <= hi_slot && hi_slot < capacity_);
+        for (std::size_t s = lo_slot; s <= hi_slot; ++s) {
+            if (!is_occupied(s)) continue;
+            if (keys_[s] == key) return s;
+            if (keys_[s] > key) return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
     void insert(Key key, Payload payload) {
         std::size_t pos = lower_bound(key);
         LI_ASSERT(pos == capacity_ || keys_[pos] != key);
@@ -117,6 +134,7 @@ public:
         LI_ASSERT(count_ == 0 || key > keys_[last_occupied()]);
         if (count_ == 0) {
             place(0, key, payload);
+            fen_add(0, +1);
             ++count_;
             return;
         }
@@ -127,6 +145,7 @@ public:
             double dens = double(occupied_in(wlo, wlo + kLeafWindow) + 1) / double(kLeafWindow);
             if (dens <= upper_threshold(0, height())) {
                 place(pos, key, payload);
+                fen_add(pos >> 6, +1);
                 ++count_;
                 return;
             }
@@ -138,6 +157,7 @@ public:
         std::optional<std::size_t> slot = find(key);
         if (!slot) return false;
         clear_bit(*slot);
+        fen_add((*slot) >> 6, -1);
         --count_;
         while (capacity_ > kLeafWindow &&
                double(count_) / double(capacity_) < lower_threshold(height(), height())) {
@@ -156,6 +176,7 @@ public:
     }
 
     void check_invariants() const {
+        LI_ASSERT(fen_prefix(num_words()) == count_); 
         std::size_t c = 0;
         for (std::size_t i = 0; i < num_words(); ++i) c += std::popcount(bits_[i]);
         LI_ASSERT(c == count_);
@@ -175,6 +196,23 @@ private:
     std::vector<std::uint64_t> bits_;
     std::size_t count_ = 0;
     std::size_t capacity_ = 0;
+    std::vector<Rank> fen_;
+
+    static std::size_t lowbit(std::size_t x ) { return x & (~x + 1); }
+
+    void fen_add(std::size_t word, long long delta) {
+        for (std::size_t x = word + 1; x <= num_words(); x += lowbit(x)) {
+            fen_[x] = Rank((long long)fen_[x] + delta);
+        }
+    }
+
+    Rank fen_prefix(std::size_t words) const {
+        Rank s = 0;
+        for (std::size_t x = words; x > 0; x -= lowbit(x)) s += fen_[x];
+        return s;
+    }
+
+    Rank fen_word(std::size_t i) const { return fen_prefix(i + 1) - fen_prefix(i); }
 
     // TODO: same here, defaulting to 16 window slot. aybe do a some cost model to determine
     // at runtime, idk. 
@@ -204,10 +242,10 @@ private:
     }
 
     std::size_t first_occupied() const { return slot_of_rank(0); }
+    
     std::size_t last_occupied() const {
-        std::size_t s = capacity_;
-        while (s > 0 && !is_occupied(s - 1)) --s;
-        return s - 1;
+        if (count_ == 0) return capacity_;
+        return slot_of_rank(count_ - 1);
     }
 
     std::size_t occupied_in(std::size_t lo, std::size_t hi) const {
@@ -235,10 +273,16 @@ private:
                 std::span<const Key> ks, std::span<const Payload> ps) {
         std::size_t n = ks.size(), slots = hi - lo;
         LI_ASSERT(n <= slots);
+        std::size_t wlo = lo >> 6, whi = (hi - 1) >> 6;
         clear_bits(lo, hi);
         for (std::size_t j = 0; j < n; ++j) {
             std::size_t s = lo + (j * slots) / n;
             place(s, ks[j], ps[j]);
+        }
+        for (std::size_t w = wlo; w <= whi; ++w) {
+            long long neu = (long long)std::popcount(bits_[w]);
+            long long old = (long long)fen_word(w);
+            if (neu != old) fen_add(w, neu - old);
         }
     }
 
@@ -279,6 +323,7 @@ private:
         payloads_.assign(new_cap, Payload{});
         capacity_ = new_cap;
         bits_.assign(num_words(), 0);
+        fen_.assign(num_words() + 1, 0);
         spread(0, new_cap, ks, ps);
     }
 
