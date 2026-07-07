@@ -242,7 +242,7 @@ private:
     }
 
     std::size_t first_occupied() const { return slot_of_rank(0); }
-    
+
     std::size_t last_occupied() const {
         if (count_ == 0) return capacity_;
         return slot_of_rank(count_ - 1);

@@ -8,6 +8,7 @@
 #include "model.hpp"
 #include "status.hpp"
 #include "segmentation.hpp"
+#include "pma.hpp"
 
 #include <vector>
 #include <cstdint>
@@ -72,13 +73,30 @@ public:
 
     void build(std::vector<Key> keys) {
         std::vector<detail::SegmentSpec> specs = detail::segment_stream(keys, epsilon_);
+
+        mapping_table_.reserve(specs.size());
+        blocks_.reserve(specs.size());
+
         for (const auto& spec : specs) {
-            mapping_table_.push_back(SegmentDescriptor{
+            mapping_table_.push_back(SegmentDescriptor {
                 spec.key_low,
                 spec.model,
                 spec.base_rank,
                 spec.count,
             });
+
+            std::vector<Key> slice(
+                keys.begin() + static_cast<std::ptrdiff_t>(spec.base_rank),
+                keys.begin() + static_cast<std::ptrdiff_t>(spec.base_rank + spec.count)
+            );
+
+            std::vector<Rank> payloads(spec.count);
+
+            for (size_t i = 0; i < spec.count; ++i) {
+                payloads[i] = static_cast<Rank>(spec.base_rank + i);
+            }
+
+            blocks_.push_back(detail::PmaBlock<Rank>::bulk_load(slice, payloads));
         }
 
         uint64_t expected_base = 0;
@@ -121,18 +139,25 @@ public:
 
     // Returns the first match it finds
     Result<uint64_t> point_lookup(Key key) const {
-        if (keys_.empty()) return Status::not_found;
-        const SegmentDescriptor& d = mapping_table_[find_descriptor(key)];
+        if (mapping_table_.empty()) return Status::not_found;
+
+        const size_t i = find_descriptor(key);
+        const SegmentDescriptor& d = mapping_table_[i];
+
         if (key < d.key_low) return Status::not_found;
 
-        auto [lo, hi] = search_window(key);
-        const auto found = std::lower_bound(keys_.begin() + lo, keys_.begin() + hi, key);
+        const detail::PmaBlock<Rank>& pma = blocks_[i];
+        if (pma.empty()) return Status::not_found;
 
-        if (found != keys_.begin() + hi && *found == key) {
-            return static_cast<uint64_t>(found - keys_.begin());
-        }
+        const auto [lo_rank, hi_rank] = local_window(d, pma.size(), key);
 
-        return Status::not_found;
+        const size_t lo_slot = pma.slot_of_rank(lo_rank);
+        const size_t hi_slot = pma.slot_of_rank(hi_rank);
+
+        const std::optional<size_t> hit = pma.find_in(key, lo_slot, hi_slot);
+        if (!hit) return Status::not_found;
+
+        return static_cast<uint64_t>(pma.payload_at(*hit));
     }
 
     // TODO: no model narrowing, just plain binary search
@@ -179,6 +204,7 @@ public:
 private:
 
     std::vector<SegmentDescriptor> mapping_table_;
+    std::vector<detail::PmaBlock<Rank>> blocks_;
     
     // TODO: this assumes keys are stricly increasing
     // Duplicate user keys are assumed to be disambiguated upstream by the uniquifier
@@ -187,6 +213,20 @@ private:
 
     double epsilon_;
 
+    std::pair<Rank, Rank> local_window(const SegmentDescriptor& d, size_t count, Key key) const {
+        Rank pred = predict(d.model, key, d.key_low);
+
+        const Rank max_rank = static_cast<Rank>(count - 1);
+        if (pred > max_rank) pred = max_rank;
+
+        const Rank eps_ceil = static_cast<Rank>(std::ceil(epsilon_));
+
+        const Rank lo_rank = (pred > eps_ceil) ? (pred - eps_ceil) : Rank{0};
+        Rank hi_rank = pred + eps_ceil + 1;
+        if (hi_rank > max_rank) hi_rank = max_rank;
+
+        return { lo_rank, hi_rank };
+    }
 };
 
 
