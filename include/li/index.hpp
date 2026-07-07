@@ -15,7 +15,7 @@
 #include <cstddef>
 #include <algorithm>
 #include <cmath>
-#include <limits>
+#include <iterator>
 
 
 namespace li {
@@ -33,43 +33,86 @@ public:
     // Custom iterate for PMA gapped arrays (currently just works like a normal iterator)
     class iterator {
     public:
-        using iterator_category = std::forward_iterator_tag;
+        using iterator_category = std::input_iterator_tag;
         using value_type        = Key;
-        using difference_type    = std::ptrdiff_t;
+        using difference_type   = std::ptrdiff_t;
         using pointer           = const Key*;
-        using reference         = const Key&;
+        using reference         = Key;
 
-        explicit iterator(const Key* p) : p_(p) {}
+        iterator(const std::vector<detail::PmaBlock<Rank>>* blocks,
+                 std::size_t block, std::size_t slot, Key high)
+            : blocks_(blocks), block_(block), slot_(slot), high_(high) {
+            settle();
+        }
 
-        reference operator*() const { return *p_; } 
-        iterator& operator++() { ++p_; return *this; }
+        static iterator make_end(const std::vector<detail::PmaBlock<Rank>>* blocks) {
+            iterator it;
+            it.blocks_ = blocks;
+            it.block_  = blocks ? blocks->size() : 0;
+            return it;
+        }
 
-        bool operator!=(const iterator& o) const { return p_ != o.p_; }
-        bool operator==(const iterator& o) const { return p_ == o.p_; }
-    
+        Key operator*() const { return (*blocks_)[block_].key_at(slot_); }
+
+        iterator& operator++() {
+            ++slot_;
+            settle();
+            return *this;
+        }
+
+        bool operator==(const iterator& o) const {
+            const bool ae = at_end(), be = o.at_end();
+            if (ae || be) return ae && be;
+            return block_ == o.block_ && slot_ == o.slot_;
+        }
+        bool operator!=(const iterator& o) const { return !(*this == o); }
+
     private:
-        const Key* p_;
+        iterator() = default;
+
+        bool at_end() const { return !blocks_ || block_ >= blocks_->size(); }
+
+        void settle() {
+            while (blocks_ && block_ < blocks_->size()) {
+                const detail::PmaBlock<Rank>& pma = (*blocks_)[block_];
+                std::size_t s = pma.next_occupied(slot_);
+                if (s < pma.capacity()) {
+                    slot_ = s;
+                    if (pma.key_at(slot_) > high_) block_ = blocks_->size();
+                    return;
+                }
+                ++block_;
+                slot_ = 0;
+            }
+        }
+
+        const std::vector<detail::PmaBlock<Rank>>* blocks_ = nullptr;
+        std::size_t block_ = 0;
+        std::size_t slot_  = 0;
+        Key high_ = 0;
     };
 
-    RangeView(const Key* b, const Key* e) : begin_(b), end_(e) {}
+    RangeView() = default;
+    RangeView(const std::vector<detail::PmaBlock<Rank>>* blocks,
+              std::size_t start_block, std::size_t start_slot, Key high)
+        : blocks_(blocks), start_block_(start_block),
+          start_slot_(start_slot), high_(high) {}
 
-    iterator begin() const { return iterator(begin_); }
-    iterator end() const { return iterator(end_); }
-    bool empty() const { return begin_ == end_; }
-    size_t size() const { return static_cast<size_t>(end_ - begin_); }
+    iterator begin() const { return iterator(blocks_, start_block_, start_slot_, high_); }
+    iterator end() const { return iterator::make_end(blocks_); }
+    bool empty() const { return begin() == end(); }
 
 private:
-    const Key* begin_;
-    const Key* end_;
+    const std::vector<detail::PmaBlock<Rank>>* blocks_ = nullptr;
+    std::size_t start_block_ = 0;
+    std::size_t start_slot_  = 0;
+    Key high_ = 0;
 };
 
 class Index {
 public:
 
     Index(double epsilon) : epsilon_(epsilon) {}
-
-    // TODO: base_rank is currently the running offset into the flat sorted keys_ 
-    // When i implement PMA, a segment's pos is derived from its physical block location
 
     void build(std::vector<Key> keys) {
         std::vector<detail::SegmentSpec> specs = detail::segment_stream(keys, epsilon_);
@@ -106,8 +149,6 @@ public:
             expected_base += d.count;
         }
         LI_ASSERT(expected_base == keys.size());
-
-        keys_ = std::move(keys);
     }
 
     // TODO: this search over the mapping table is correct
@@ -164,36 +205,12 @@ public:
     // this works for now  but in the future need to implement model narrowing steps
     // O(logn) -> O(logepsilon)
     RangeView range_lookup(Key low, Key high) const {
-        if (keys_.empty() || low > high) {
-            return RangeView(keys_.data(), keys_.data());
+        if (mapping_table_.empty() || low > high) {
+            return RangeView(&blocks_, blocks_.size(), 0, high);
         }
-
-        auto start = std::lower_bound(keys_.begin(), keys_.end(), low);
-        auto end = std::upper_bound(keys_.begin(), keys_.end(), high);
-
-        const uint64_t si = static_cast<uint64_t>(start - keys_.begin());
-        const uint64_t ei = static_cast<uint64_t>(end - keys_.begin());
-
-        if (si >= ei) {
-            return RangeView(keys_.data(), keys_.data());
-        }
-
-        return RangeView(keys_.data() + si, keys_.data() + ei);
-    }
-
-    std::pair<uint64_t, uint64_t> search_window(Key key) const {
-        const SegmentDescriptor& d = mapping_table_[find_descriptor(key)];
-
-        const Rank local_pred = predict(d.model, key, d.key_low);
-
-        const uint64_t eps_ceil = static_cast<uint64_t>(std::ceil(epsilon_));
-        const uint64_t low  = (local_pred > eps_ceil) ? (local_pred - eps_ceil) : 0;
-
-        uint64_t high = local_pred + eps_ceil + 1;
-
-        if (high > d.count) high = d.count;
-        
-        return { d.base_rank + low, d.base_rank + high };
+        const size_t start_bi = find_descriptor(low);
+        const std::size_t start_slot = blocks_[start_bi].lower_bound(low);
+        return RangeView(&blocks_, start_bi, start_slot, high);
     }
 
     const std::vector<SegmentDescriptor>& mapping_table_for_test() const {
@@ -205,11 +222,6 @@ private:
 
     std::vector<SegmentDescriptor> mapping_table_;
     std::vector<detail::PmaBlock<Rank>> blocks_;
-    
-    // TODO: this assumes keys are stricly increasing
-    // Duplicate user keys are assumed to be disambiguated upstream by the uniquifier
-    // Until that's implemented, no duplicates is a preocndition
-    std::vector<Key> keys_;
 
     double epsilon_;
 

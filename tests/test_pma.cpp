@@ -234,4 +234,39 @@ TEST(PmaFindIn, WithGapsAfterInserts) {
     EXPECT_FALSE(b.find_in(220, lo, hi).has_value());
 }
 
+TEST(PmaFindInBound, WindowFlatAsWidthGrows) {
+    const Rank eps_ceil = 2;
+    const double rho_leaf = 0.10;
+    const std::size_t rank_width = 2 * eps_ceil + 2;
+    const double slot_bound = double(rank_width) / rho_leaf;
+
+    for (std::size_t w : {std::size_t(1000), std::size_t(10000),
+                          std::size_t(100000), std::size_t(1000000)}) {
+        std::vector<Key> keys;
+        keys.reserve(w);
+        for (std::size_t j = 0; j < w; ++j) keys.push_back(Key(2 * j));
+        std::vector<Rank> pl(w);
+        for (std::size_t j = 0; j < w; ++j) pl[j] = Rank(j);
+        Block b = Block::bulk_load(keys, pl);
+
+        for (Rank pos : {Rank(0), Rank(w / 2), Rank(w - w / 10), Rank(w - 1)}) {
+            const Rank lo_rank = (pos > eps_ceil) ? pos - eps_ceil : 0;
+            Rank hi_rank = pos + eps_ceil + 1;
+            if (hi_rank > Rank(w - 1)) hi_rank = Rank(w - 1);
+
+            const std::size_t lo_slot = b.slot_of_rank(lo_rank);
+            const std::size_t hi_slot = b.slot_of_rank(hi_rank);
+            const std::size_t window = hi_slot - lo_slot + 1;
+
+            EXPECT_LE(double(window), slot_bound)
+                << "window blew up at w=" << w << " pos=" << pos;
+
+            const Key target = b.key_at(b.slot_of_rank(pos));
+            auto hit = b.find_in(target, lo_slot, hi_slot);
+            ASSERT_TRUE(hit.has_value());
+            EXPECT_EQ(b.key_at(*hit), target);
+        }
+    }
+}
+
 }
