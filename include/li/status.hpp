@@ -1,7 +1,8 @@
-#pragma once
 /* 
-* The error handling foundation
+* status.hpp - The error handling foundation
 */
+
+#pragma once
 
 #include <new>
 #include <type_traits>

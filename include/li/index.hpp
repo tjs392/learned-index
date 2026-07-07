@@ -1,3 +1,7 @@
+/*
+* index.hpp - The index
+*/
+
 #pragma once
 
 #include "types.hpp"

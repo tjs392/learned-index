@@ -1,3 +1,8 @@
+/*
+* Tree Segments
+* They hold the base, size, moments, and prediction model
+*/
+
 #pragma once
 
 #include "types.hpp"

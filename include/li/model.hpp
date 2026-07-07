@@ -1,3 +1,7 @@
+/*
+* model.hpp - Simple linear model primitives for local key predictions
+*/
+
 #pragma once
 
 #include <cstdint>

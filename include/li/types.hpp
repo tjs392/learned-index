@@ -1,4 +1,9 @@
+/*
+* types.hpp - Primitive types for better readability
+*/
+
 #pragma once
+
 #include <cstdint>
 
 namespace li {
