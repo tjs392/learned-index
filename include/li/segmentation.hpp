@@ -27,12 +27,12 @@ namespace li::detail {
 *
 */
 
-struct SegmentSpec {
+struct FittedSegment {
     Key key_low;
     uint64_t base_rank;
     uint64_t count;
-    Model model;
-    Moments moments;
+    LinearModel model;
+    LeastSquaresSums moments;
     Key first_key;
     Key last_key;
 };
@@ -127,9 +127,9 @@ public:
         return true;
     }
 
-    SegmentSpec finalize() {
+    FittedSegment finalize() {
         LI_ASSERT(n_ > 0);
-        SegmentSpec spec;
+        FittedSegment spec;
         spec.key_low = key_low_;
         spec.base_rank = 0;
         spec.count = n_;
@@ -154,9 +154,9 @@ private:
         return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
     }
 
-    Model read_off_model() const {
+    LinearModel read_off_model() const {
         if (n_ == 1) {
-            return Model { 0.0, 0.0 };
+            return LinearModel { 0.0, 0.0 };
         }
 
         const double min_slope = edge_slope(rect_[0], rect_[2]);
@@ -175,7 +175,7 @@ private:
         }
 
         const double beta = iy - slope * ix;
-        return Model { slope, beta };
+        return LinearModel { slope, beta };
     }
 
     void accumulate_moments(double x, double y) {
@@ -198,11 +198,11 @@ private:
 
     Key first_key_{};
     Key last_key_{};
-    Moments moments_{0, 0.0, 0.0, 0.0, 0.0 };
+    LeastSquaresSums moments_{0, 0.0, 0.0, 0.0, 0.0 };
 };
 
-inline std::vector<SegmentSpec> segment_stream(const std::vector<Key>& keys, double epsilon) {
-    std::vector<SegmentSpec> specs;
+inline std::vector<FittedSegment> segment_stream(const std::vector<Key>& keys, double epsilon) {
+    std::vector<FittedSegment> specs;
     if (keys.empty()) return specs;
 
     uint64_t base = 0;
@@ -212,7 +212,7 @@ inline std::vector<SegmentSpec> segment_stream(const std::vector<Key>& keys, dou
     uint64_t local = 1;
     for (uint64_t i = 1; i < keys.size(); ++i) {
         if (!cone.try_extend(keys[i], local)) {
-            SegmentSpec spec = cone.finalize();
+            FittedSegment spec = cone.finalize();
             spec.base_rank = base;
             specs.push_back(spec);
             base = i;
@@ -224,7 +224,7 @@ inline std::vector<SegmentSpec> segment_stream(const std::vector<Key>& keys, dou
         }
     }
 
-    SegmentSpec spec = cone.finalize();
+    FittedSegment spec = cone.finalize();
     spec.base_rank = base;
     specs.push_back(spec);
     return specs;

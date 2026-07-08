@@ -23,7 +23,7 @@ namespace li {
 
 struct SegmentDescriptor {
     Key key_low;
-    Model model;
+    LinearModel model;
     uint64_t base_rank;
     size_t count;
 };
@@ -109,13 +109,13 @@ private:
     Key high_ = 0;
 };
 
-class Index {
+class LearnedIndex {
 public:
 
-    Index(double epsilon) : epsilon_(epsilon) {}
+    LearnedIndex(double epsilon) : epsilon_(epsilon) {}
 
     void build(std::vector<Key> keys) {
-        std::vector<detail::SegmentSpec> specs = detail::segment_stream(keys, epsilon_);
+        std::vector<detail::FittedSegment> specs = detail::segment_stream(keys, epsilon_);
 
         mapping_table_.reserve(specs.size());
         blocks_.reserve(specs.size());

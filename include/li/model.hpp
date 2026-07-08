@@ -10,14 +10,14 @@
 
 namespace li {
 
-struct Model {
+struct LinearModel {
     double alpha;
     double beta; 
 };
 
 // x,y are segment local
 // so x = key - key_low, y = local rank
-struct Moments {
+struct LeastSquaresSums {
     uint64_t n;
     double sum_x;
     double sum_y;
@@ -26,7 +26,7 @@ struct Moments {
 };
 
 // minimizes residual error from moments
-[[nodiscard]] inline Model least_squares(Moments m) {
+[[nodiscard]] inline LinearModel least_squares(LeastSquaresSums m) {
     LI_ASSERT(m.n > 0);
 
     // n is converted to double here with causes precision loss,
@@ -37,17 +37,17 @@ struct Moments {
 
     // n == 1, no unique slope
     if (d == 0) {
-        return Model{ 0.0, m.sum_y / static_cast<double>(m.n) };
+        return LinearModel{ 0.0, m.sum_y / static_cast<double>(m.n) };
     }
 
     double alpha = (static_cast<double>(m.n) * m.sum_xy - m.sum_x * m.sum_y) / d;
     double beta = (m.sum_y - alpha * m.sum_x) / static_cast<double>(m.n);
-    return Model{ alpha, beta };
+    return LinearModel{ alpha, beta };
 }
 
 // Predicts the position of the key relative to the segment's start
 // within error bounds (epsilon)
-[[nodiscard]] inline Rank predict(Model m, Key k, Key key_low) {
+[[nodiscard]] inline Rank predict(LinearModel m, Key k, Key key_low) {
     LI_ASSERT(k >= key_low);
 
     // segment key low offset
@@ -58,7 +58,7 @@ struct Moments {
 }
 
 // signed true distance from the line
-[[nodiscard]] inline double residual(Model m, Key key, Key key_low, uint64_t true_rank) {
+[[nodiscard]] inline double residual(LinearModel m, Key key, Key key_low, uint64_t true_rank) {
     LI_ASSERT(key >= key_low);
     return true_rank - (static_cast<double>(key - key_low) * m.alpha + m.beta);
 }

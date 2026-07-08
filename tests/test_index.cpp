@@ -7,17 +7,17 @@
 
 namespace {
 
-using li::Index;
+using li::LearnedIndex;
 using li::Status;
 
-Index make_index(std::vector<li::Key> keys, double eps) {
-    Index idx(eps);
+LearnedIndex make_index(std::vector<li::Key> keys, double eps) {
+    LearnedIndex idx(eps);
     idx.build(std::move(keys));
     return idx;
 }
 
 void expect_all_keys_found(const std::vector<li::Key>& keys, double eps) {
-    Index idx = make_index(keys, eps);
+    LearnedIndex idx = make_index(keys, eps);
     for (uint64_t i = 0; i < keys.size(); ++i) {
         auto r = idx.point_lookup(keys[i]);
         ASSERT_TRUE(r.ok())
@@ -27,12 +27,12 @@ void expect_all_keys_found(const std::vector<li::Key>& keys, double eps) {
     }
 }
 
-TEST(IndexDescriptor, ReturnsOwningSegmentForEveryKey) {
+TEST(LearnedIndexDescriptor, ReturnsOwningSegmentForEveryKey) {
     std::vector<li::Key> keys;
     uint64_t v = 0;
     for (uint64_t i = 0; i < 300; ++i) { v += 1 + (i % 7); keys.push_back(v); }
     const double eps = 0.5;
-    Index idx = make_index(keys, eps);
+    LearnedIndex idx = make_index(keys, eps);
 
     for (uint64_t i = 0; i < keys.size(); ++i) {
         size_t di = idx.find_descriptor(keys[i]);
@@ -43,74 +43,74 @@ TEST(IndexDescriptor, ReturnsOwningSegmentForEveryKey) {
     }
 }
 
-TEST(IndexDescriptor, KeyBelowAllResolvesToFirst) {
+TEST(LearnedIndexDescriptor, KeyBelowAllResolvesToFirst) {
     std::vector<li::Key> keys = {100, 200, 300, 400};
-    Index idx = make_index(keys, 1.0);
+    LearnedIndex idx = make_index(keys, 1.0);
     EXPECT_EQ(idx.find_descriptor(50), 0u);
 }
 
-TEST(IndexLookup, ExactLine) {
+TEST(LearnedIndexLookup, ExactLine) {
     std::vector<li::Key> keys;
     for (uint64_t i = 0; i < 200; ++i) keys.push_back(1000 + i);
     expect_all_keys_found(keys, 4.0);
 }
 
-TEST(IndexLookup, CurvedMultiSegment) {
+TEST(LearnedIndexLookup, CurvedMultiSegment) {
     std::vector<li::Key> keys;
     uint64_t v = 0;
     for (uint64_t i = 0; i < 500; ++i) { v += 1 + (i / 50); keys.push_back(v); }
     expect_all_keys_found(keys, 8.0);
 }
 
-TEST(IndexLookup, TightEpsManySegments) {
+TEST(LearnedIndexLookup, TightEpsManySegments) {
     std::vector<li::Key> keys;
     uint64_t v = 0;
     for (uint64_t i = 0; i < 300; ++i) { v += 1 + (i % 7); keys.push_back(v); }
     expect_all_keys_found(keys, 0.5);
 }
 
-TEST(IndexLookup, EpsZeroExact) {
+TEST(LearnedIndexLookup, EpsZeroExact) {
     std::vector<li::Key> keys;
     for (uint64_t i = 0; i < 100; ++i) keys.push_back(5 + 3 * i);
     expect_all_keys_found(keys, 0.0);
 }
 
-TEST(IndexLookup, WideGaps) {
+TEST(LearnedIndexLookup, WideGaps) {
     std::vector<li::Key> keys;
     uint64_t v = 0;
     for (uint64_t i = 0; i < 200; ++i) { v += 1 + ((i * 40503u) % 500); keys.push_back(v); }
     expect_all_keys_found(keys, 2.0);
 }
 
-TEST(IndexLookup, NotFoundGapKey) {
+TEST(LearnedIndexLookup, NotFoundGapKey) {
     std::vector<li::Key> keys = {10, 20, 30, 40, 50};
-    Index idx = make_index(keys, 2.0);
+    LearnedIndex idx = make_index(keys, 2.0);
     auto r = idx.point_lookup(25);
     EXPECT_FALSE(r.ok());
     EXPECT_EQ(r.status(), Status::not_found);
 }
 
-TEST(IndexLookup, NotFoundBelowAll) {
+TEST(LearnedIndexLookup, NotFoundBelowAll) {
     std::vector<li::Key> keys = {100, 200, 300};
-    Index idx = make_index(keys, 2.0);
+    LearnedIndex idx = make_index(keys, 2.0);
     auto r = idx.point_lookup(1);
     EXPECT_FALSE(r.ok());
     EXPECT_EQ(r.status(), Status::not_found);
 }
 
-TEST(IndexLookup, NotFoundAboveAll) {
+TEST(LearnedIndexLookup, NotFoundAboveAll) {
     std::vector<li::Key> keys = {100, 200, 300};
-    Index idx = make_index(keys, 2.0);
+    LearnedIndex idx = make_index(keys, 2.0);
     auto r = idx.point_lookup(9999);
     EXPECT_FALSE(r.ok());
     EXPECT_EQ(r.status(), Status::not_found);
 }
 
-TEST(IndexLookup, FirstAndLastKey) {
+TEST(LearnedIndexLookup, FirstAndLastKey) {
     std::vector<li::Key> keys;
     uint64_t v = 0;
     for (uint64_t i = 0; i < 250; ++i) { v += 1 + (i % 5); keys.push_back(v); }
-    Index idx = make_index(keys, 1.0);
+    LearnedIndex idx = make_index(keys, 1.0);
 
     auto rf = idx.point_lookup(keys.front());
     ASSERT_TRUE(rf.ok());
@@ -121,9 +121,9 @@ TEST(IndexLookup, FirstAndLastKey) {
     EXPECT_EQ(rl.value(), keys.size() - 1);
 }
 
-TEST(IndexLookup, SingleKey) {
+TEST(LearnedIndexLookup, SingleKey) {
     std::vector<li::Key> keys = {42};
-    Index idx = make_index(keys, 4.0);
+    LearnedIndex idx = make_index(keys, 4.0);
     auto r = idx.point_lookup(42);
     ASSERT_TRUE(r.ok());
     EXPECT_EQ(r.value(), 0u);
@@ -131,17 +131,17 @@ TEST(IndexLookup, SingleKey) {
     EXPECT_FALSE(idx.point_lookup(43).ok());
 }
 
-TEST(IndexLookup, TwoKeysOneSegment) {
+TEST(LearnedIndexLookup, TwoKeysOneSegment) {
     std::vector<li::Key> keys = {42, 99};
-    Index idx = make_index(keys, 4.0);
+    LearnedIndex idx = make_index(keys, 4.0);
     auto r0 = idx.point_lookup(42);
     auto r1 = idx.point_lookup(99);
     ASSERT_TRUE(r0.ok()); EXPECT_EQ(r0.value(), 0u);
     ASSERT_TRUE(r1.ok()); EXPECT_EQ(r1.value(), 1u);
 }
 
-TEST(IndexLookup, EmptyIndex) {
-    Index idx(4.0);
+TEST(LearnedIndexLookup, EmptyLearnedIndex) {
+    LearnedIndex idx(4.0);
     idx.build({});
     auto r = idx.point_lookup(5);
     EXPECT_FALSE(r.ok());

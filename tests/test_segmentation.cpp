@@ -9,7 +9,7 @@
 
 namespace {
 
-using li::detail::SegmentSpec;
+using li::detail::FittedSegment;
 using li::detail::segment_stream;
 
 std::vector<li::Key> random_keys(std::mt19937_64& rng, uint64_t n, uint64_t max_gap) {
