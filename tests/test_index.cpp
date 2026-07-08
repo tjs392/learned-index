@@ -34,12 +34,17 @@ TEST(LearnedIndexDescriptor, ReturnsOwningSegmentForEveryKey) {
     const double eps = 0.5;
     LearnedIndex idx = make_index(keys, eps);
 
+    const auto& mt = idx.mapping_table_for_test();
+    std::vector<uint64_t> base(mt.size(), 0);
+    uint64_t acc = 0;
+    for (size_t s = 0; s < mt.size(); ++s) { base[s] = acc; acc += mt[s].count; }
+
     for (uint64_t i = 0; i < keys.size(); ++i) {
         size_t di = idx.find_descriptor(keys[i]);
-        const auto& d = idx.mapping_table_for_test()[di];
+        const auto& d = mt[di];
         EXPECT_LE(d.key_low, keys[i]);
-        EXPECT_GE(i, d.base_rank);
-        EXPECT_LT(i, d.base_rank + d.count);
+        EXPECT_GE(i, base[di]);
+        EXPECT_LT(i, base[di] + d.count);
     }
 }
 

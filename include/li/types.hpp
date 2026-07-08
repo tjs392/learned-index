@@ -9,4 +9,5 @@
 namespace li {
     using Key = std::uint64_t;
     using Rank = std::uint64_t;
+    using Payload = std::uint64_t;
 }

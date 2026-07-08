@@ -9,7 +9,7 @@ namespace {
 using li::detail::PmaBlock;
 using li::Key;
 using li::Rank;
-using Block = PmaBlock<Key>;
+using Block = PmaBlock;
 
 Block make_block(std::vector<Key> keys) {
     std::vector<Key> payloads;

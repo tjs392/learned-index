@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <tuple>
 
 
 namespace li {
@@ -24,8 +25,12 @@ namespace li {
 struct SegmentDescriptor {
     Key key_low;
     LinearModel model;
-    uint64_t base_rank;
     size_t count;
+
+    // TODO: 
+    // this is a multithreading artifact - not using in single threaded applications
+    // just a reminder to come back and handle this
+    uint64_t version;
 };
 
 class RangeView {
@@ -39,13 +44,13 @@ public:
         using pointer           = const Key*;
         using reference         = Key;
 
-        iterator(const std::vector<detail::PmaBlock<Rank>>* blocks,
+        iterator(const std::vector<detail::PmaBlock>* blocks,
                  std::size_t block, std::size_t slot, Key high)
             : blocks_(blocks), block_(block), slot_(slot), high_(high) {
             settle();
         }
 
-        static iterator make_end(const std::vector<detail::PmaBlock<Rank>>* blocks) {
+        static iterator make_end(const std::vector<detail::PmaBlock>* blocks) {
             iterator it;
             it.blocks_ = blocks;
             it.block_  = blocks ? blocks->size() : 0;
@@ -74,7 +79,7 @@ public:
 
         void settle() {
             while (blocks_ && block_ < blocks_->size()) {
-                const detail::PmaBlock<Rank>& pma = (*blocks_)[block_];
+                const detail::PmaBlock& pma = (*blocks_)[block_];
                 std::size_t s = pma.next_occupied(slot_);
                 if (s < pma.capacity()) {
                     slot_ = s;
@@ -86,14 +91,14 @@ public:
             }
         }
 
-        const std::vector<detail::PmaBlock<Rank>>* blocks_ = nullptr;
+        const std::vector<detail::PmaBlock>* blocks_ = nullptr;
         std::size_t block_ = 0;
         std::size_t slot_  = 0;
         Key high_ = 0;
     };
 
     RangeView() = default;
-    RangeView(const std::vector<detail::PmaBlock<Rank>>* blocks,
+    RangeView(const std::vector<detail::PmaBlock>* blocks,
               std::size_t start_block, std::size_t start_slot, Key high)
         : blocks_(blocks), start_block_(start_block),
           start_slot_(start_slot), high_(high) {}
@@ -103,7 +108,7 @@ public:
     bool empty() const { return begin() == end(); }
 
 private:
-    const std::vector<detail::PmaBlock<Rank>>* blocks_ = nullptr;
+    const std::vector<detail::PmaBlock>* blocks_ = nullptr;
     std::size_t start_block_ = 0;
     std::size_t start_slot_  = 0;
     Key high_ = 0;
@@ -115,40 +120,37 @@ public:
     LearnedIndex(double epsilon) : epsilon_(epsilon) {}
 
     void build(std::vector<Key> keys) {
-        std::vector<detail::FittedSegment> specs = detail::segment_stream(keys, epsilon_);
+        std::vector<detail::FittedSegment> fitted = detail::segment_stream(keys, epsilon_);
 
-        mapping_table_.reserve(specs.size());
-        blocks_.reserve(specs.size());
+        mapping_table_.reserve(fitted.size());
+        blocks_.reserve(fitted.size());
 
-        for (const auto& spec : specs) {
-            mapping_table_.push_back(SegmentDescriptor {
-                spec.key_low,
-                spec.model,
-                spec.base_rank,
-                spec.count,
+        for (const auto& fit : fitted) {
+            mapping_table_.push_back(SegmentDescriptor{
+                fit.key_low,
+                fit.model,
+                fit.count,
             });
 
             std::vector<Key> slice(
-                keys.begin() + static_cast<std::ptrdiff_t>(spec.base_rank),
-                keys.begin() + static_cast<std::ptrdiff_t>(spec.base_rank + spec.count)
+                keys.begin() + static_cast<std::ptrdiff_t>(fit.base_rank),
+                keys.begin() + static_cast<std::ptrdiff_t>(fit.base_rank + fit.count)
             );
 
-            std::vector<Rank> payloads(spec.count);
-
-            for (size_t i = 0; i < spec.count; ++i) {
-                payloads[i] = static_cast<Rank>(spec.base_rank + i);
+            std::vector<Payload> payloads(fit.count);
+            for (size_t i = 0; i < fit.count; ++i) {
+                payloads[i] = static_cast<Payload>(fit.base_rank + i);
             }
 
-            blocks_.push_back(detail::PmaBlock<Rank>::bulk_load(slice, payloads));
+            blocks_.push_back(detail::PmaBlock::bulk_load(slice, payloads));
         }
 
-        uint64_t expected_base = 0;
+        Rank total_keys = 0;
         for (const auto& d : mapping_table_) {
-            LI_ASSERT(d.base_rank == expected_base);
             LI_ASSERT(d.count > 0);
-            expected_base += d.count;
+            total_keys += d.count;
         }
-        LI_ASSERT(expected_base == keys.size());
+        LI_ASSERT(total_keys == keys.size());
     }
 
     // TODO: this search over the mapping table is correct
@@ -179,7 +181,7 @@ public:
     // TODO: Handle duplicates down the line
 
     // Returns the first match it finds
-    Result<uint64_t> point_lookup(Key key) const {
+    Result<Payload> point_lookup(Key key) const {
         if (mapping_table_.empty()) return Status::not_found;
 
         const size_t i = find_descriptor(key);
@@ -187,7 +189,7 @@ public:
 
         if (key < d.key_low) return Status::not_found;
 
-        const detail::PmaBlock<Rank>& pma = blocks_[i];
+        const detail::PmaBlock& pma = blocks_[i];
         if (pma.empty()) return Status::not_found;
 
         const auto [lo_rank, hi_rank] = local_window(d, pma.size(), key);
@@ -198,7 +200,7 @@ public:
         const std::optional<size_t> hit = pma.find_in(key, lo_slot, hi_slot);
         if (!hit) return Status::not_found;
 
-        return static_cast<uint64_t>(pma.payload_at(*hit));
+        return pma.payload_at(*hit);
     }
 
     // TODO: no model narrowing, just plain binary search
@@ -217,11 +219,68 @@ public:
         return mapping_table_;
     }
 
+    Status insert(Key key, Payload payload) {
+        if (mapping_table_.empty()) {
+            const std::vector<Key> seed_key{key};
+            const std::vector<Payload> seed_payload{payload};
+            blocks_.push_back(detail::PmaBlock::bulk_load(seed_key, seed_payload));
+            mapping_table_.push_back(SegmentDescriptor{key, LinearModel{0.0, 0.0}, 1});
+            return Status::ok;
+        }
+
+        const size_t i = find_descriptor(key);
+        blocks_[i].insert(key, payload);
+
+        auto [dense_keys, dense_payloads, fitted] = refit_segment(i);
+
+        if (fitted.size() == 1) {
+            SegmentDescriptor& d = mapping_table_[i];
+            d.key_low = fitted[0].key_low;
+            d.model = fitted[0].model;
+            d.count = fitted[0].count;
+            return Status::ok;
+        }
+
+        std::vector<SegmentDescriptor> new_descriptors;
+        std::vector<detail::PmaBlock> new_blocks;
+        new_descriptors.reserve(fitted.size());
+        new_blocks.reserve(fitted.size());
+
+        size_t slice_start = 0;
+        for (const auto& fit : fitted) {
+            new_descriptors.push_back(SegmentDescriptor{fit.key_low, fit.model, fit.count});
+            new_blocks.push_back(detail::PmaBlock::bulk_load(
+                std::span<const Key>(dense_keys.data() + slice_start, fit.count),
+                std::span<const Payload>(dense_payloads.data() + slice_start, fit.count)
+            ));
+            slice_start += fit.count;
+        }
+
+        replace_segments(i, new_descriptors, new_blocks);
+        return Status::ok;
+    }
+
+
+
+    Result<Rank> global_rank_of(Key key) const {
+        if (mapping_table_.empty()) return Status::not_found;
+        
+        const size_t i = find_descriptor(key);
+        if (key < mapping_table_[i].key_low) return Status::not_found;
+        
+        const std::optional<size_t> slot = blocks_[i].find(key);
+        if (!slot) return Status::not_found;
+        
+        return base_rank_of(i) + blocks_[i].local_rank(*slot);
+    }
+
+    const std::vector<detail::PmaBlock>& blocks_for_test() const { return blocks_; }
+    
 
 private:
 
     std::vector<SegmentDescriptor> mapping_table_;
-    std::vector<detail::PmaBlock<Rank>> blocks_;
+    std::vector<detail::PmaBlock> blocks_;
 
     double epsilon_;
 
@@ -239,7 +298,44 @@ private:
 
         return { lo_rank, hi_rank };
     }
+
+    Rank base_rank_of(size_t segment_index) const {
+        Rank preceding_key_count = 0;
+        for (size_t earlier = 0; earlier < segment_index; ++earlier) {
+            preceding_key_count += mapping_table_[earlier].count;
+        }
+        return preceding_key_count;
+    }
+
+    // TODO:
+    // Remove when hull tree is implemented
+    // right now this is O(n) it does the dumping of gapped -> dense, and 
+    // then runs the frozen cone from scratch
+    // after hull tree, i can query the maintained hull
+    // thisll be O(log w) feasibility check and the O(log^2w) split
+    // for now just working insert with segment refitting to keep optimal stuff
+    std::tuple<std::vector<Key>, std::vector<Payload>, std::vector<detail::FittedSegment>> refit_segment(size_t segment_index) {
+        auto [dense_keys, dense_payloads] = blocks_[segment_index].dump_sorted();
+        std::vector<detail::FittedSegment> fitted = detail::segment_stream(dense_keys, epsilon_);
+        
+        return std::make_tuple(std::move(dense_keys), std::move(dense_payloads), std::move(fitted));
+    }
+
+    void replace_segments(size_t segment_index,
+                       std::vector<SegmentDescriptor>& new_descriptors,
+                       std::vector<detail::PmaBlock>& new_blocks) {
+        const auto at = static_cast<std::ptrdiff_t>(segment_index);
+
+        mapping_table_.erase(mapping_table_.begin() + at);
+        mapping_table_.insert(mapping_table_.begin() + at, new_descriptors.begin(), new_descriptors.end());
+
+        blocks_.erase(blocks_.begin() + at);
+        blocks_.insert(blocks_.begin() + at, 
+                 std::make_move_iterator(new_blocks.begin()),
+                  std::make_move_iterator(new_blocks.end()));
+    }
 };
+
 
 
 }

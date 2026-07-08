@@ -27,7 +27,6 @@
 
 namespace li::detail {
 
-template <class Payload = Rank>
 class PmaBlock {
 public:
     static PmaBlock bulk_load(std::span<const Key> keys, std::span<const Payload> payloads) {
@@ -188,6 +187,19 @@ public:
             prev = keys_[s];
             first = false;
         }
+    }
+
+    // used on insert -> to be replaced when implemetning hull
+    // works for now
+    std::pair<std::vector<Key>, std::vector<Payload>> dump_sorted() const {
+        std::vector<Key> sorted_keys; std::vector<Payload> sorted_payloads;
+        sorted_keys.reserve(count_); sorted_payloads.reserve(count_);
+        
+        for (size_t slot = next_occupied(0); slot < capacity_; slot = next_occupied(slot + 1)) {
+            sorted_keys.push_back(keys_[slot]); sorted_payloads.push_back(payloads_[slot]);
+        }
+
+        return { sorted_keys, sorted_payloads };
     }
 
 private:
