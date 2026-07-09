@@ -30,7 +30,7 @@ struct SegmentDescriptor {
     // TODO: 
     // this is a multithreading artifact - not using in single threaded applications
     // just a reminder to come back and handle this
-    uint64_t version;
+    uint64_t version = 0;
 };
 
 class RangeView {
@@ -114,6 +114,8 @@ private:
     Key high_ = 0;
 };
 
+// TODO:
+// Don't forget about proactive clean/splitting and optional rebuilding to optimal m
 class LearnedIndex {
 public:
 
@@ -223,40 +225,48 @@ public:
         if (mapping_table_.empty()) {
             const std::vector<Key> seed_key{key};
             const std::vector<Payload> seed_payload{payload};
+
             blocks_.push_back(detail::PmaBlock::bulk_load(seed_key, seed_payload));
             mapping_table_.push_back(SegmentDescriptor{key, LinearModel{0.0, 0.0}, 1});
+            
             return Status::ok;
         }
 
         const size_t i = find_descriptor(key);
+
+        // TODO: currently i assert non dupes
+        // come back this when i implement the uniquifier
         blocks_[i].insert(key, payload);
 
         auto [dense_keys, dense_payloads, fitted] = refit_segment(i);
+        apply_refit(i, dense_keys, dense_payloads, fitted);
 
-        if (fitted.size() == 1) {
-            SegmentDescriptor& d = mapping_table_[i];
-            d.key_low = fitted[0].key_low;
-            d.model = fitted[0].model;
-            d.count = fitted[0].count;
+        return Status::ok;
+    }
+
+
+    Status erase(Key key) {
+        if (mapping_table_.empty()) return Status::not_found;
+
+        const size_t i = find_descriptor(key);
+        if (key < mapping_table_[i].key_low) return Status::not_found;
+
+        if (!blocks_[i].erase(key)) return Status::not_found;
+
+        if (blocks_[i].empty()) {
+            std::vector<SegmentDescriptor> none;
+            std::vector<detail::PmaBlock> none_blocks;
+
+            replace_segments(i, 1, none, none_blocks);
+            
+            if (i > 0) restore_irreducibility(i - 1, i - 1);
+            
             return Status::ok;
         }
 
-        std::vector<SegmentDescriptor> new_descriptors;
-        std::vector<detail::PmaBlock> new_blocks;
-        new_descriptors.reserve(fitted.size());
-        new_blocks.reserve(fitted.size());
-
-        size_t slice_start = 0;
-        for (const auto& fit : fitted) {
-            new_descriptors.push_back(SegmentDescriptor{fit.key_low, fit.model, fit.count});
-            new_blocks.push_back(detail::PmaBlock::bulk_load(
-                std::span<const Key>(dense_keys.data() + slice_start, fit.count),
-                std::span<const Payload>(dense_payloads.data() + slice_start, fit.count)
-            ));
-            slice_start += fit.count;
-        }
-
-        replace_segments(i, new_descriptors, new_blocks);
+        auto [dense_keys, dense_payloads, fitted] = refit_segment(i);
+        apply_refit(i, dense_keys, dense_payloads, fitted);
+        
         return Status::ok;
     }
 
@@ -284,6 +294,12 @@ private:
 
     double epsilon_;
 
+    //TODO:
+    // defaulting this to 0.0 to hold models to perfect epsilon
+    // play around with this, maybe grid search the optimal merge slack param or sumthn
+    // in da future doe
+    double merge_slack_ = 0.0;
+
     std::pair<Rank, Rank> local_window(const SegmentDescriptor& d, size_t count, Key key) const {
         Rank pred = predict(d.model, key, d.key_low);
 
@@ -299,6 +315,10 @@ private:
         return { lo_rank, hi_rank };
     }
 
+
+    // TODO:
+    // this is O(n) prefex scan, but it's off the hot path, so only fires on rank query
+    // we can do a fenwick maybe, but just logging todo here fo rthe future. probably won't matter
     Rank base_rank_of(size_t segment_index) const {
         Rank preceding_key_count = 0;
         for (size_t earlier = 0; earlier < segment_index; ++earlier) {
@@ -321,19 +341,118 @@ private:
         return std::make_tuple(std::move(dense_keys), std::move(dense_payloads), std::move(fitted));
     }
 
-    void replace_segments(size_t segment_index,
-                       std::vector<SegmentDescriptor>& new_descriptors,
-                       std::vector<detail::PmaBlock>& new_blocks) {
-        const auto at = static_cast<std::ptrdiff_t>(segment_index);
+    // TODO:
+    // this is O(n). which is fine for now since m << N and cache resident.
+    // we can move this to O(logn) by using a tree-d mapping table
+    // but we can measure the performance of this... might not be needed cause
+    // this table is pretty cache freidnyl
+    void replace_segments(size_t first, size_t remove_count,
+                          std::vector<SegmentDescriptor>& new_descriptors,
+                          std::vector<detail::PmaBlock>& new_blocks) {
+        const auto at = static_cast<std::ptrdiff_t>(first);
+        const auto rm = static_cast<std::ptrdiff_t>(remove_count);
 
-        mapping_table_.erase(mapping_table_.begin() + at);
-        mapping_table_.insert(mapping_table_.begin() + at, new_descriptors.begin(), new_descriptors.end());
+        mapping_table_.erase(mapping_table_.begin() + at, mapping_table_.begin() + at + rm);
+        mapping_table_.insert(mapping_table_.begin() + at,
+                              new_descriptors.begin(), new_descriptors.end());
 
-        blocks_.erase(blocks_.begin() + at);
-        blocks_.insert(blocks_.begin() + at, 
-                 std::make_move_iterator(new_blocks.begin()),
-                  std::make_move_iterator(new_blocks.end()));
+        blocks_.erase(blocks_.begin() + at, blocks_.begin() + at + rm);
+        blocks_.insert(blocks_.begin() + at,
+                       std::make_move_iterator(new_blocks.begin()),
+                       std::make_move_iterator(new_blocks.end()));
     }
+
+    // TODO: 
+    // Currently I am deferring the "which "
+    void apply_refit(size_t i,
+                     std::vector<Key>& dense_keys,
+                     std::vector<Payload>& dense_payloads,
+                     std::vector<detail::FittedSegment>& fitted) {
+        if (fitted.size() == 1) {
+            SegmentDescriptor& d = mapping_table_[i];
+
+            d.key_low = fitted[0].key_low;
+            d.model = fitted[0].model;
+            d.count = fitted[0].count;
+
+            restore_irreducibility(i, i);
+            return;
+        }
+
+        std::vector<SegmentDescriptor> new_descriptors;
+        std::vector<detail::PmaBlock> new_blocks;
+
+        new_descriptors.reserve(fitted.size());
+        new_blocks.reserve(fitted.size());
+
+        size_t slice_start = 0;
+        for (const auto& fit : fitted) {
+            new_descriptors.push_back(SegmentDescriptor{fit.key_low, fit.model, fit.count});
+            new_blocks.push_back(detail::PmaBlock::bulk_load(
+                std::span<const Key>(dense_keys.data() + slice_start, fit.count),
+                std::span<const Payload>(dense_payloads.data() + slice_start, fit.count)
+            ));
+            slice_start += fit.count;
+        }
+
+        const size_t k = fitted.size();
+
+        replace_segments(i, 1, new_descriptors, new_blocks);
+        restore_irreducibility(i, i + k - 1);
+    }
+
+    // TODO: hull tree 
+    // right now this just dumps both blocks dense + reruns the cone
+    // O(w) this is just correct. once hull tree hits, we can do
+    // the bridge merge whichll be O(logw). no dumping or rescan, etc.
+    // just swap to seg stream line EASY :D
+    bool try_merge(size_t a) {
+        auto [key_a, payload_a] = blocks_[a].dump_sorted();
+        auto [key_b, payload_b] = blocks_[a + 1].dump_sorted();
+
+        std::vector<Key> union_keys;
+        union_keys.reserve(key_a.size() + key_b.size());
+        union_keys.insert(union_keys.end(), key_a.begin(), key_a.end());
+        union_keys.insert(union_keys.end(), key_b.begin(), key_b.end());
+
+        auto fitted = detail::segment_stream(union_keys, epsilon_ * (1.0 - merge_slack_));
+        if (fitted.size() != 1) return false;
+
+        std::vector<Payload> union_payloads;
+        union_payloads.reserve(payload_a.size() + payload_b.size());
+        union_payloads.insert(union_payloads.end(), payload_a.begin(), payload_a.end());
+        union_payloads.insert(union_payloads.end(), payload_b.begin(), payload_b.end());
+
+        std::vector<SegmentDescriptor> merged{
+            SegmentDescriptor{key_a.front(), fitted[0].model, key_a.size() + key_b.size()}
+        };
+        
+        std::vector<detail::PmaBlock> merged_block;
+        merged_block.push_back(detail::PmaBlock::bulk_load(union_keys, union_payloads));
+
+        replace_segments(a, 2, merged, merged_block);
+        return true;
+    }
+
+    // TODO:
+    // right now i am just saying, greedy merge the right segment.
+    // but what if merging with the left segment or something in between is better?
+    // pick some heuristic/cost model to determine where to merge MAYBE
+    // but this might cause overhead, so just try this out when optimizing
+    void restore_irreducibility(size_t lo, size_t hi) {
+        size_t merges = 0;
+        
+        // right boundary absorbs the run's right neighbor, 
+        // so the merged segment stays at the index hi. so recheck it against
+        // its new neighbor after it was merge
+        while (hi + 1 < mapping_table_.size() && try_merge(hi)) ++merges;
+
+        // similar logic here, left absorbs its left neighbor, so need to descrement
+        while (lo > 0 && try_merge(lo - 1)) { ++merges; --lo; }
+        
+        LI_ASSERT(merges <= 2);
+    }
+
 };
 
 

@@ -9,6 +9,7 @@
 #include <random>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 
 namespace {
 
@@ -97,10 +98,12 @@ void insert_and_check(LearnedIndex& idx, Key k, Payload p,
     payloads[k] = p;
 
     const size_t after = idx.mapping_table_for_test().size();
-    EXPECT_GE(after, before) << "insert lowered segment count (no merges in M2)";
-    EXPECT_LE(after, before + 2)
-        << "insert of " << k << " changed count by " << (after - before) << " (Lemma 1.1 caps at +2)";
-
+    const long long delta =
+        static_cast<long long>(after) - static_cast<long long>(before);
+    EXPECT_LE(std::llabs(delta), 2)
+        << "one op moved segment count by " << delta
+        << " (L3 caps abs(delta) at 2: split +<=2, restore merge -<=2)";
+        
     check_index(idx, live, payloads, eps);
 }
 
