@@ -58,7 +58,7 @@ public:
             upper_.push_back(p1);
             lower_.push_back(p2);
             upper_start_ = lower_start_ = 0;
-            accumulate_moments(x, y);
+            moments_.add(x, y);
             n_ = 1;
             return true;
         }
@@ -70,7 +70,7 @@ public:
             upper_.push_back(p1);
             lower_.push_back(p2);
             last_key_ = key;
-            accumulate_moments(x, y);
+            moments_.add(x, y);
             n_ = 2;
             return true;
         }
@@ -122,7 +122,7 @@ public:
         }
 
         last_key_ = key;
-        accumulate_moments(x, y);
+        moments_.add(x, y);
         ++n_;
         return true;
     }
@@ -178,14 +178,6 @@ private:
         return LinearModel { slope, beta };
     }
 
-    void accumulate_moments(double x, double y) {
-        moments_.n += 1;
-        moments_.sum_x += x;
-        moments_.sum_y += y;
-        moments_.sum_xx += x * x;
-        moments_.sum_xy += x * y;
-    }
-
     Key key_low_;
     double eps_;
     uint64_t n_;
@@ -198,7 +190,7 @@ private:
 
     Key first_key_{};
     Key last_key_{};
-    LeastSquaresSums moments_{0, 0.0, 0.0, 0.0, 0.0 };
+    LeastSquaresSums moments_{};
 };
 
 inline std::vector<FittedSegment> segment_stream(const std::vector<Key>& keys, double epsilon) {

@@ -18,11 +18,19 @@ struct LinearModel {
 // x,y are segment local
 // so x = key - key_low, y = local rank
 struct LeastSquaresSums {
-    uint64_t n;
-    double sum_x;
-    double sum_y;
-    double sum_xx;
-    double sum_xy;
+    uint64_t n = 0;
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    double sum_xx = 0.0;
+    double sum_xy = 0.0;
+
+    void add(double x, double y) {
+        n += 1;
+        sum_x += x;
+        sum_y += y;
+        sum_xx += x * x;
+        sum_xy += x * y;
+    }
 };
 
 // minimizes residual error from moments
