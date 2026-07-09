@@ -17,6 +17,7 @@ add_executable(li_tests
   test_range.cpp
   test_pma.cpp
   test_inserts.cpp
+  test_churn.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li
