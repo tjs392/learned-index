@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <utility>
+#include "model.hpp"
 
 namespace li::detail {
 
@@ -22,6 +23,7 @@ public:
         HullTree t;
         if (keys.empty()) return t;
 
+        t.moment_origin_ = keys.front();
         t.items_.assign(keys.begin(), keys.end());
         t.root_ = t.build_balanced(0, t.items_.size());
 
@@ -86,9 +88,10 @@ public:
     }
 
     void insert(Key key) {
-        if (root_ == NIL) { 
-            root_ = new_leaf(key); 
-            return; 
+        if (root_ == NIL) {
+            moment_origin_ = key;
+            root_ = new_leaf(key);
+            return;
         }
 
         path_.clear();
@@ -175,12 +178,35 @@ public:
         validate_node(root_, prev, seen);
     }
 
+    LinearModel model(Key key_low) const {
+        LI_ASSERT(root_ != NIL);
+
+        LinearModel line = least_squares(nodes_[root_].moments);
+
+        const double key_low_offset =
+            static_cast<double>(key_low) - static_cast<double>(moment_origin_);
+        line.beta = line.beta + line.alpha * key_low_offset;
+
+        return line;
+    }
+
+    const LeastSquaresSums& root_moments_for_test() const {
+        LI_ASSERT(root_ != NIL);
+        return nodes_[root_].moments;
+    }
+
+    Key moment_origin_for_test() const {
+        return moment_origin_;
+    }
+
+
 private:
     struct Node {
         Key           min_key;
         std::uint32_t left;
         std::uint32_t right;
         std::uint32_t size;
+        LeastSquaresSums moments;
     };
 
     // why 0.71?
@@ -201,6 +227,7 @@ private:
     std::vector<std::uint32_t> path_;
     std::vector<Key> items_;
     std::uint32_t root_ = NIL;
+    Key moment_origin_ = 0;
 
     bool is_leaf(std::uint32_t n) const { 
         return nodes_[n].left == NIL; 
@@ -224,24 +251,42 @@ private:
     }
 
     std::uint32_t new_leaf(Key key) {
-        std::uint32_t i = alloc();
-        nodes_[i] = Node{ key, NIL, NIL, 1 };
-        
-        return i;
+        std::uint32_t index = alloc();
+        Node& node = nodes_[index];
+
+        node.min_key = key;
+        node.left = NIL;
+        node.right = NIL;
+        node.size = 1;
+
+        const double x = static_cast<double>(key) - static_cast<double>(moment_origin_);
+
+        node.moments = LeastSquaresSums{};
+        node.moments.add(x, 0.0);
+
+        return index;
     }
 
     std::uint32_t new_internal(std::uint32_t l, std::uint32_t r) {
         std::uint32_t i = alloc();
+
         nodes_[i].left = l;
         nodes_[i].right = r;
         nodes_[i].size = nodes_[l].size + nodes_[r].size;
         nodes_[i].min_key = nodes_[l].min_key;
+        nodes_[i].moments = combine_child_moments(nodes_[l], nodes_[r]);
+
         return i;
     }
 
     void refresh(std::uint32_t n) {
-        nodes_[n].size = nodes_[nodes_[n].left].size + nodes_[nodes_[n].right].size;
-        nodes_[n].min_key = nodes_[nodes_[n].left].min_key;
+        const std::uint32_t left = nodes_[n].left;
+        const std::uint32_t right = nodes_[n].right;
+
+        nodes_[n].size = nodes_[left].size + nodes_[right].size;
+        nodes_[n].min_key = nodes_[left].min_key;
+
+        nodes_[n].moments = combine_child_moments(nodes_[left], nodes_[right]);
     }
 
     void fix_up() {
@@ -309,6 +354,8 @@ private:
     }
 
     void validate_node(std::uint32_t n, Key& prev, bool& seen) const {
+        LI_ASSERT(static_cast<std::uint64_t>(nodes_[n].size) == nodes_[n].moments.n);
+
         if (is_leaf(n)) {
             if (seen) LI_ASSERT(nodes_[n].min_key > prev);
             prev = nodes_[n].min_key;
@@ -324,6 +371,26 @@ private:
         LI_ASSERT(nodes_[n].size == nodes_[nodes_[n].left].size + nodes_[nodes_[n].right].size);
         LI_ASSERT(nodes_[n].min_key == nodes_[nodes_[n].left].min_key);
         LI_ASSERT(!unbalanced(n));
+    }
+
+    
+    static LeastSquaresSums combine_child_moments(const Node& left, const Node& right) {
+        const double left_count = static_cast<double>(left.size);
+
+        LeastSquaresSums parent_moments;
+        parent_moments.n      = left.moments.n + right.moments.n;
+        parent_moments.sum_x  = left.moments.sum_x + right.moments.sum_x;
+        parent_moments.sum_xx = left.moments.sum_xx + right.moments.sum_xx;
+
+        // y = rank. right child numbered its points from 0 locally, but they actually
+        // sit after all of lefts points, so every right rank is left_count higher
+        // just ad the shif tback
+        parent_moments.sum_y  = left.moments.sum_y + right.moments.sum_y
+                              + left_count * static_cast<double>(right.moments.n);
+        parent_moments.sum_xy = left.moments.sum_xy + right.moments.sum_xy
+                              + left_count * right.moments.sum_x;
+
+        return parent_moments;
     }
 };
 

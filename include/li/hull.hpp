@@ -24,7 +24,11 @@ public:
     static StaticHull build(std::span<const Key> keys, double epsilon, double merge_slack = 0.0) {
         StaticHull h;
         h.count_ = keys.size();
-        if (keys.empty()) { h.coverable_ = false; h.forced_cut_ = 0; return h; }
+        if (keys.empty()) { h
+            .coverable_ = false; 
+            h.forced_cut_ = 0; 
+            return h; 
+        }
 
         h.key_low_ = keys[0];
         h.eps_ = epsilon * (1.0 - merge_slack);

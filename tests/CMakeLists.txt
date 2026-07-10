@@ -20,6 +20,7 @@ add_executable(li_tests
   test_churn.cpp
   test_hull.cpp
   test_hull_tree.cpp
+  test_hull_moments.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li
