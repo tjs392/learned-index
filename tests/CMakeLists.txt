@@ -18,6 +18,8 @@ add_executable(li_tests
   test_pma.cpp
   test_inserts.cpp
   test_churn.cpp
+  test_hull.cpp
+  test_hull_tree.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li
