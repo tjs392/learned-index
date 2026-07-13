@@ -12,7 +12,9 @@
 
 namespace li::detail {
 
-
+// DEPRACATED
+// not used anymore, this is algorithmically optimal,
+// but horribly cache unfriendly - so moving on from hull trees and tatic hull
 class HullTree {
 public:
     static constexpr std::uint32_t NIL = 0xFFFFFFFFu;

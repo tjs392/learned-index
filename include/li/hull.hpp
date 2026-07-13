@@ -17,6 +17,10 @@ namespace li::detail {
 // build_balanced() calls hull consturction logic per rebuilt subtree
 // Pt right now is temporary
 // TODO: ^^^
+
+// DEPRACATED
+// not used anymore, this is algorithmically optimal,
+// but horribly cache unfriendly - so moving on from hull trees and tatic hull
 class StaticHull {
 public:
     struct Pt { double x; double y; };
