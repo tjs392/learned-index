@@ -21,6 +21,7 @@ namespace li::detail {
 // DEPRACATED
 // not used anymore, this is algorithmically optimal,
 // but horribly cache unfriendly - so moving on from hull trees and tatic hull
+// shown here: https://drops.dagstuhl.de/storage/00lipics/lipics-vol351-esa2025/LIPIcs.ESA.2025.64/LIPIcs.ESA.2025.64.pdf
 class StaticHull {
 public:
     struct Pt { double x; double y; };
