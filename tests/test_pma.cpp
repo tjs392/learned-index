@@ -14,7 +14,7 @@ using Block = PmaBlock;
 Block make_block(std::vector<Key> keys) {
     std::vector<Key> payloads;
     for (Key k : keys) payloads.push_back(k + 7);
-    return Block::bulk_load(keys, payloads);
+    return Block::bulk_load(keys, payloads, PmaBlock::capacity_for_key_cap(1u << 20));
 }
 
 std::vector<Key> collect(const Block& b) {
@@ -129,9 +129,9 @@ TEST(PmaAppend, MatchesInsertResult) {
 
 TEST(PmaErase, RemovePresentAndAbsent) {
     Block b = make_block({10, 20, 30, 40, 50});
-    EXPECT_TRUE(b.erase(30));
-    EXPECT_FALSE(b.erase(30));
-    EXPECT_FALSE(b.erase(999));
+    EXPECT_TRUE(b.erase(30).found);
+    EXPECT_FALSE(b.erase(30).found);
+    EXPECT_FALSE(b.erase(999).found);
     EXPECT_EQ(collect(b), (std::vector<Key>{10, 20, 40, 50}));
 }
 
@@ -247,7 +247,7 @@ TEST(PmaFindInBound, WindowFlatAsWidthGrows) {
         for (std::size_t j = 0; j < w; ++j) keys.push_back(Key(2 * j));
         std::vector<Rank> pl(w);
         for (std::size_t j = 0; j < w; ++j) pl[j] = Rank(j);
-        Block b = Block::bulk_load(keys, pl);
+        Block b = Block::bulk_load(keys, pl, PmaBlock::capacity_for_key_cap(1u << 20));
 
         for (Rank pos : {Rank(0), Rank(w / 2), Rank(w - w / 10), Rank(w - 1)}) {
             const Rank lo_rank = (pos > eps_ceil) ? pos - eps_ceil : 0;

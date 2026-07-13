@@ -71,4 +71,9 @@ struct LeastSquaresSums {
     return true_rank - (static_cast<double>(key - key_low) * m.alpha + m.beta);
 }
 
+[[nodiscard]] inline double line_at(LinearModel m, Key key, Key key_low) {
+    LI_ASSERT(key >= key_low);
+    return m.alpha * static_cast<double>(key - key_low) + m.beta;
+}
+
 }

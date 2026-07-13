@@ -13,14 +13,11 @@ add_executable(li_tests
   test_status.cpp
   test_model.cpp
   test_segmentation.cpp
-  test_index.cpp
-  test_range.cpp
   test_pma.cpp
-  test_inserts.cpp
-  test_churn.cpp
-  test_hull.cpp
-  test_hull_tree.cpp
-  test_hull_moments.cpp
+  test_minimal_line_cover.cpp
+  test_cedar_index.cpp
+  test_range.cpp
+  test_spacebound.cpp
 )
 target_link_libraries(li_tests PRIVATE
   li::li
