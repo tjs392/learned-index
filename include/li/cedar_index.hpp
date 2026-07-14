@@ -106,8 +106,9 @@ public:
         segment.count += 1;
 
         if (front_insert) {
-            last_structural_ops_ = rebuild_broken_segment(index);
-            return Status::ok;
+            Key old_low = segment.key_low;
+            segment.model.beta -= segment.model.alpha * double(old_low - key);
+            segment.key_low = key;
         }
 
         sync_band_after_insert(index, key, edit);
