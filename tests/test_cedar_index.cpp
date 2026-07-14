@@ -214,3 +214,20 @@ TEST(CedarIndex, BuildFromEmptyExactEps) {
     for (uint64_t s = 0; s < 4; ++s)
         run_churn(0.0, 2048, 1024, 11, 800 + s, 300, 0);
 }
+
+TEST(CedarIndex, FrontInsertRebaseAvoidsRebuildStorm) {
+    std::set<Key> live; std::map<Key, Payload> pay;
+    std::vector<Key> seed;
+    for (uint64_t i = 0; i < 10; ++i) seed.push_back(100000 + i);
+    CedarIndex idx = build_index(seed, 0.0, 2048, 1024, 11, live, pay);
+
+    const int count = 1000;
+    for (int i = 0; i < count; ++i) {
+        Key k = 100000 - 1 - uint64_t(i);
+        insert_and_check(idx, k, Payload(500000000ull + uint64_t(i)), live, pay);
+        if (::testing::Test::HasFailure()) return;
+    }
+    // Fixed: 0 rebuilds. Unfixed: one per insert (== count). Slack of 2 for paranoia.
+    EXPECT_LE(idx.cover_recomputes(), 2u)
+        << "front-insert re-base regressed: rebuild firing per new-minimum insert";
+}

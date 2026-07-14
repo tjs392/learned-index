@@ -107,11 +107,21 @@ public:
 
         if (front_insert) {
             Key old_low = segment.key_low;
-            segment.model.beta -= segment.model.alpha * double(old_low - key);
+            segment.model.beta += 1.0 - segment.model.alpha * static_cast<double>(old_low - key);
             segment.key_low = key;
-        }
 
-        sync_band_after_insert(index, key, edit);
+            if (!edit.moved_empty()) {
+                segment.tolerance_band.rebuild_range(edit.moved_lo, edit.moved_hi,
+                                                     segment.pma, segment.model, segment.key_low);
+            } else {
+                double dev = line_at(segment.model, key, segment.key_low)
+                             - double(segment.pma.local_rank(edit.slot));
+                segment.tolerance_band.place(edit.slot, dev);
+            }
+
+        } else {
+            sync_band_after_insert(index, key, edit);
+        }
 
         double deviation_low = segment.tolerance_band.min_over_occupied();
         double deviation_high = segment.tolerance_band.max_over_occupied();
@@ -229,6 +239,8 @@ public:
 
     const std::vector<Segment>& segments_for_test() const { return mapping_table_; }
     int last_structural_ops() const { return last_structural_ops_; }
+    std::size_t cover_recomputes() const { return cover_recomputes_; }
+    std::size_t num_segments() const { return mapping_table_.size(); }
     double epsilon() const { return epsilon_; }
     std::size_t w_s() const { return w_s_; }
     std::size_t w_m() const { return w_m_; }
@@ -241,6 +253,7 @@ private:
     int b_;
     std::size_t max_capacity_slots_;
     int last_structural_ops_ = 0;
+    std::size_t cover_recomputes_ = 0;
 
     Segment& segment_at(std::size_t index) { return mapping_table_[index]; }
 
@@ -336,6 +349,7 @@ private:
         detail::LineCoverResult verdict = detail::minimal_line_cover(keys, epsilon_);
 
         int ops = 0;
+        ++cover_recomputes_;
 
         if (verdict.status == detail::LineCoverStatus::COVERABLE) {
             bool force_split = mapping_table_[index].refit_budget <= 0
