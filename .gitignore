@@ -2,6 +2,10 @@ build/
 out/
 output/
 cmake-build-*/
+vendor/
+data/
+bench/
+li_old/
 
 compile_commands.json
 .cache/

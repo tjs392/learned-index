@@ -107,7 +107,7 @@ public:
     };
 
     ItemPair at_pair(std::size_t i) {
-        LI_ASSERT(i + 1 < size_);
+        CEDAR_ASSERT(i + 1 < size_);
 
         Node* n = root_;
         std::size_t rem = i;
@@ -133,7 +133,7 @@ public:
 
     // the i'th item in key order
     Item& at(std::size_t i) {
-        LI_ASSERT(i < size_);
+        CEDAR_ASSERT(i < size_);
         Node* n = root_;
 
         for (int h = height_; h > 0; --h) {
@@ -178,7 +178,7 @@ public:
 
 
     void insert_at(std::size_t i, Key sep, Item&& item) {
-        LI_ASSERT(i <= size_);
+        CEDAR_ASSERT(i <= size_);
 
         Split sp = do_insert(root_, height_, i, sep, std::move(item));
 
@@ -202,7 +202,7 @@ public:
     }
 
     Item erase_at(std::size_t i) {
-        LI_ASSERT(i < size_);
+        CEDAR_ASSERT(i < size_);
         Item out{};
         do_erase(root_, height_, i, out);
 
@@ -241,7 +241,7 @@ public:
     // the seg tree routes on copies of key_low, so anything that changes a seg's key_low needs
     // to call this or the oruting desyncs
     void set_sep(std::size_t i, Key sep) {
-        LI_ASSERT(i < size_);
+        CEDAR_ASSERT(i < size_);
         Node* n = root_;
         std::size_t rem = i;
 
@@ -263,7 +263,7 @@ public:
 
     void check_invariants() const {
         if (empty()) {
-            LI_ASSERT(height_ == 0 && root_->n == 0);
+            CEDAR_ASSERT(height_ == 0 && root_->n == 0);
             return;
         }
 
@@ -547,20 +547,20 @@ private:
     }
 
     void verify(Node* n, int h, bool is_root) const {
-        LI_ASSERT(n->n >= 1);
+        CEDAR_ASSERT(n->n >= 1);
 
-        if (!is_root) LI_ASSERT(n->n >= B / 2);
+        if (!is_root) CEDAR_ASSERT(n->n >= B / 2);
 
-        LI_ASSERT(n->n <= B);
+        CEDAR_ASSERT(n->n <= B);
         
         if (h == 0) return;
 
         const Inner* in = static_cast<const Inner*>(n);
 
         for (int i = 0; i < in->n; ++i) {
-            LI_ASSERT(in->sub_items[i] == count_items(in->child[i], h - 1));
-            LI_ASSERT(in->keys[i] == first_key(in->child[i], h - 1));
-            if (i) LI_ASSERT(in->keys[i - 1] <= in->keys[i]);
+            CEDAR_ASSERT(in->sub_items[i] == count_items(in->child[i], h - 1));
+            CEDAR_ASSERT(in->keys[i] == first_key(in->child[i], h - 1));
+            if (i) CEDAR_ASSERT(in->keys[i - 1] <= in->keys[i]);
             verify(in->child[i], h - 1, false);
         }
     }

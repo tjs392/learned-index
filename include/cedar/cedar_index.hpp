@@ -34,7 +34,7 @@
 namespace li {
 
 // for bench marking the timing of phases
-#if defined(LI_PHASE_TIMING)
+#if defined(CEDAR_PHASE_TIMING)
     namespace phase {a
     enum P { kRebuildTotal, kApplyRefit, kDumpSorted, kLineCover, kPieceSplit, kMiddleSplit,
             kMergeFlanksInRebuild, kMergeFlanksInInsert, kStoreInsert,
@@ -66,11 +66,11 @@ namespace li {
     inline void reset() { for (int i = 0; i < kN; ++i) samples[i].clear(); clear_last(); }
     }
 
-    #define LI_PHASE(p) ::li::phase::Scope _li_ps_##__LINE__(::li::phase::p)
-    #define LI_PHASE_OP_BEGIN() ::li::phase::clear_last()
+    #define CEDAR_PHASE(p) ::li::phase::Scope _li_ps_##__LINE__(::li::phase::p)
+    #define CEDAR_PHASE_OP_BEGIN() ::li::phase::clear_last()
 #else
-    #define LI_PHASE(p) ((void)0)
-    #define LI_PHASE_OP_BEGIN() ((void)0)
+    #define CEDAR_PHASE(p) ((void)0)
+    #define CEDAR_PHASE_OP_BEGIN() ((void)0)
 #endif
 
 // uses memmove insert, so O(w_s) per op
@@ -105,17 +105,17 @@ public:
           w_m_(w_m),
           b_(b),
           max_capacity_slots_(SegBlock::capacity_for_key_cap(w_s)) {
-        LI_ASSERT(fit_ratio > 0.0 && fit_ratio <= 1.0);
-        LI_CHECK(w_s >= w_m,
+        CEDAR_ASSERT(fit_ratio > 0.0 && fit_ratio <= 1.0);
+        CEDAR_CHECK(w_s >= w_m,
                  "CedarIndex: w_s (%zu) < w_m (%zu) is INVALID -- merges install up to w_m keys "
                  "into blocks whose ceiling derives from w_s",
                  w_s, w_m);
     }
 
     void build(const std::vector<Key>& keys) {
-        // LI_MAPPING_VECTOR is really just a correctness check
+        // CEDAR_MAPPING_VECTOR is really just a correctness check
         // TODO: Remove this compiler flag when finished
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
                 mapping_table_.clear();
         #else
                 table_.clear();
@@ -147,7 +147,7 @@ public:
     }
 
     Status insert(Key key, Payload payload) {
-        LI_PHASE_OP_BEGIN();
+        CEDAR_PHASE_OP_BEGIN();
         if (table_size() == 0) {
             std::vector<Key> one_key{ key };
             std::vector<Payload> one_payload{ payload };
@@ -159,13 +159,13 @@ public:
         const std::size_t index = loc.index;
         Segment& segment = *loc.seg;
 
-        LI_ASSERT(segment.store.find(key) == std::nullopt);
+        CEDAR_ASSERT(segment.store.find(key) == std::nullopt);
 
         bool front_insert = key < segment.key_low;
         SegBlock::EditResult edit;
 
         {
-            LI_PHASE(kStoreInsert);
+            CEDAR_PHASE(kStoreInsert);
             if (segment.store.empty() || key > segment.store.max_key()) {
                 edit = segment.store.append(key, payload);
             } else {
@@ -186,7 +186,7 @@ public:
             if (in_band) {
                 segment.model.beta = beta_rebased;
                 segment.key_low = key;
-            #if !defined(LI_MAPPING_VECTOR)
+            #if !defined(CEDAR_MAPPING_VECTOR)
                 // only front inserts change key_low
                 // key_low is the seg tree's separator for routing
                 // since the seg tree we use is a copy, need to update the key_low
@@ -278,7 +278,7 @@ public:
         return lookup_in_segment(*loc.seg, key);
     }
 
-    #if defined(LI_H0_DIAG)
+    #if defined(CEDAR_H0_DIAG)
     void diagnose_missing(Key key) const {
         if (table_size() == 0) {
             std::fprintf(stderr, "H0DIAG key=%llu: EMPTY TABLE\n", (unsigned long long)key);
@@ -405,14 +405,14 @@ public:
     SegStats segment_stats() const {
         SegStats s;
         s.M = table_size();
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             for (const auto& p : mapping_table_) {
         #else
             auto body = [&](const std::unique_ptr<Segment>& p) {
         #endif
         s.slots += double(p->store.capacity());
         s.keys += double(p->store.size());
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             }
         #else
             };
@@ -424,6 +424,15 @@ public:
     // isolating it here for testing
     std::size_t route_for_test(Key key) const { return route(key); }
     std::size_t table_size_for_test() const { return table_size(); }
+
+    template <class F>
+    void for_each_segment_for_test(F&& f) const {
+        #if defined(CEDAR_MAPPING_VECTOR)
+            for (const auto& p : mapping_table_) f(*p);
+        #else
+            table_.for_each_item([&](const std::unique_ptr<Segment>& p) { f(*p); });
+        #endif
+    }
 
     void set_merge_delta(std::size_t d) { merge_delta_ = d; }
     void set_merge_prop(std::size_t k) { merge_prop_ = k; }
@@ -472,7 +481,7 @@ public:
 private:
     // LI MAPPING VECTOR is the same op stream with identical stuff, but just simpler
     // helps me track if the mapping table B+tree is good
-    #if defined(LI_MAPPING_VECTOR)
+    #if defined(CEDAR_MAPPING_VECTOR)
         std::vector<std::unique_ptr<Segment>> mapping_table_;
         Segment& seg(std::size_t i) { return *mapping_table_[i]; }
         const Segment& seg(std::size_t i) const { return *mapping_table_[i]; }
@@ -504,7 +513,7 @@ private:
     };
 
     Located route_located(Key key) const {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             const std::size_t i = route(key);
             return { i, const_cast<Segment*>(&seg(i)) };
         #else
@@ -516,7 +525,7 @@ private:
     // segments i and i+1 used in
     struct SegPair { Segment* a; Segment* b; };
     SegPair at_pair(std::size_t i) {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             return { &seg(i), &seg(i + 1) };
         #else
             const auto p = table_.at_pair(i);
@@ -526,7 +535,7 @@ private:
 
     // only really used in build()
     void push_back_segment(Segment&& sgm) {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             mapping_table_.push_back(std::make_unique<Segment>(std::move(sgm)));
         #else
             const Key sep = sgm.key_low;
@@ -563,7 +572,7 @@ private:
     int b_;
     std::size_t max_capacity_slots_;
     std::size_t route(Key key) const {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             auto it = std::upper_bound(mapping_table_.begin(), mapping_table_.end(), key,
                 [](Key k, const std::unique_ptr<Segment>& s) { return k < s->key_low; });
             if (it == mapping_table_.begin()) return 0;
@@ -606,7 +615,7 @@ private:
         segment.model = model;
 
         {
-            LI_PHASE(kBulkLoad);
+            CEDAR_PHASE(kBulkLoad);
             segment.store = SegBlock::bulk_load(keys, payloads, max_capacity_slots_);
         }
 
@@ -659,7 +668,7 @@ private:
                          InstallSite site = InstallSite::kBuild) {
         detail::LineCoverResult verdict = detail::minimal_line_cover(keys, epsilon_fit_);
 
-        LI_CHECK(verdict.status == detail::LineCoverStatus::COVERABLE,
+        CEDAR_CHECK(verdict.status == detail::LineCoverStatus::COVERABLE,
                  "make_segment: %zu keys not eps_fit-coverable (install site %d) -- caller broke "
                  "the coverability contract",
                  keys.size(), int(site));
@@ -689,7 +698,7 @@ private:
 
     // Measure the new model's min/max error, start the guard from it, fail is exceeds eps
     void reset_guard(Segment& segment, InstallSite site = InstallSite::kBuild, double cone_margin = -1.0) {
-        LI_PHASE(kResetGuard);
+        CEDAR_PHASE(kResetGuard);
         auto [lo, hi] = exact_deviations(segment);
         segment.guard.reset(lo, hi);
 
@@ -701,7 +710,7 @@ private:
 
         // floating point error for h0 check
         const double h0_slack = 16.0 * double(segment.count + 1) * std::numeric_limits<double>::epsilon();
-        LI_CHECK(segment.guard.holds(epsilon_ + h0_slack),
+        CEDAR_CHECK(segment.guard.holds(epsilon_ + h0_slack),
                  "H0 AT BIRTH violated: install site %d, count %zu, exact deviations [%.3f, %.3f], "
                  "eps_inv %.1f -- an install path produced a non-covering model",
                  int(site), segment.count, lo, hi, epsilon_);
@@ -711,7 +720,7 @@ private:
     // or not fittable), then check if the new neighbors can merge.
     void rebuild_broken_segment(std::size_t index) {
         cover_recomputes_ += 1;
-        LI_PHASE(kRebuildTotal);
+        CEDAR_PHASE(kRebuildTotal);
         // raii trick so i dont have to update state everywhere
         // also only used for measuring
         struct InRebuild {
@@ -729,20 +738,20 @@ private:
         SortedView view{};
 
         {
-            LI_PHASE(kDumpSorted);
+            CEDAR_PHASE(kDumpSorted);
             view = sorted_view(seg(index).store);
         }
 
         const std::span<const Key> keys = view.keys;
         const std::span<const Payload> payloads = view.payloads;
 
-        LI_ASSERT(!keys.empty());
+        CEDAR_ASSERT(!keys.empty());
 
         const Key live_key_low = keys[0];
         detail::LineCoverResult verdict;
 
         {
-            LI_PHASE(kLineCover);
+            CEDAR_PHASE(kLineCover);
             verdict = detail::minimal_line_cover(keys, epsilon_fit_);
         }
 
@@ -785,12 +794,12 @@ private:
     }
 
     void apply_refit(std::size_t index, LinearModel new_model, Key new_key_low) {
-        LI_PHASE(kApplyRefit);
+        CEDAR_PHASE(kApplyRefit);
         Segment& segment = seg(index);
         segment.key_low = new_key_low;
         segment.model = new_model;
 
-        #if !defined(LI_MAPPING_VECTOR)
+        #if !defined(CEDAR_MAPPING_VECTOR)
             table_.set_sep(index, new_key_low);
         #endif
 
@@ -802,10 +811,10 @@ private:
 
     // split segment in half and refit each
     int apply_middle_split(std::size_t index) {
-        LI_PHASE(kMiddleSplit);
+        CEDAR_PHASE(kMiddleSplit);
         const SortedView view = sorted_view(seg(index).store);
 
-        LI_ASSERT(view.keys.size() >= 2);
+        CEDAR_ASSERT(view.keys.size() >= 2);
 
         std::size_t mid = view.keys.size() / 2;
         std::vector<Segment> parts;
@@ -815,7 +824,7 @@ private:
         k += append_cover_segments(view.keys.subspan(mid), view.payloads.subspan(mid), parts);
 
         {
-            LI_PHASE(kReplaceRange);
+            CEDAR_PHASE(kReplaceRange);
             replace_range(index, 1, std::move(parts));
         }
 
@@ -826,7 +835,7 @@ private:
                                         const std::vector<detail::LineCoverPiece>& pieces,
                                         std::span<const Key> keys,
                                         std::span<const Payload> payloads) {
-        LI_PHASE(kPieceSplit);
+        CEDAR_PHASE(kPieceSplit);
         return apply_piece_split(index, pieces, keys, payloads);
     }
 
@@ -852,7 +861,7 @@ private:
         std::size_t k = parts.size();
 
         {
-            LI_PHASE(kReplaceRange);
+            CEDAR_PHASE(kReplaceRange);
             replace_range(index, 1, std::move(parts));
         }
 
@@ -862,7 +871,7 @@ private:
     // only left and right are provably mergable after split
     // irreducibility lemma
     void try_merge_flanks(std::size_t lo, std::size_t hi) {
-        #if defined(LI_PHASE_TIMING)
+        #if defined(CEDAR_PHASE_TIMING)
             ::li::phase::Scope _li_mf(in_rebuild_ ? ::li::phase::kMergeFlanksInRebuild
                                                     : ::li::phase::kMergeFlanksInInsert);
         #endif
@@ -904,13 +913,13 @@ private:
             }
         }
 
-        #ifdef LI_NO_MERGE
+        #ifdef CEDAR_NO_MERGE
             return false;
         #endif
 
         merge_probes_ += 1;
 
-        LI_ASSERT(!left.store.empty() && !right.store.empty());
+        CEDAR_ASSERT(!left.store.empty() && !right.store.empty());
 
         const Key merged_key_low = left.store.keys_view()[0];
         // prefilter to help out p99, if infeasible on subset of points, then it's infeasible on all
@@ -939,7 +948,7 @@ private:
         LinearModel _cone_model;
 
         {
-            LI_PHASE(kMergeCone);
+            CEDAR_PHASE(kMergeCone);
             detail::StreamingCone cone(merged_key_low, epsilon_fit_);
             uint64_t local = 0;
 
@@ -957,7 +966,7 @@ private:
 
         const LinearModel model = _cone_model;
 
-        LI_PHASE(kMergeMaterialize);
+        CEDAR_PHASE(kMergeMaterialize);
         Segment merged = make_merged_segment(left, right, merged_key_low, model);
         replace_one(left_index, 2, std::move(merged));
         merge_probe_hits_ += 1;
@@ -975,7 +984,7 @@ private:
             merged.model = model;
 
             {
-                LI_PHASE(kBulkLoad);
+                CEDAR_PHASE(kBulkLoad);
                 merged.store = detail::SegmentStore::bulk_load2(lb.keys_view(), lb.payloads_view(),
                                                                 rb.keys_view(), rb.payloads_view(),
                                                                 max_capacity_slots_);
@@ -994,7 +1003,7 @@ private:
     }
 
     void remove_segment(std::size_t index) {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             mapping_table_.erase(mapping_table_.begin() + std::ptrdiff_t(index));
         #else
             table_.erase_at(index);
@@ -1002,7 +1011,7 @@ private:
     }
 
     void replace_range(std::size_t first, std::size_t remove_count, std::vector<Segment>&& news) {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             std::vector<std::unique_ptr<Segment>> boxed;
             boxed.reserve(news.size());
             for (auto& n : news) boxed.push_back(std::make_unique<Segment>(std::move(n)));
@@ -1022,7 +1031,7 @@ private:
     }
 
     void replace_one(std::size_t first, std::size_t remove_count, Segment&& one) {
-        #if defined(LI_MAPPING_VECTOR)
+        #if defined(CEDAR_MAPPING_VECTOR)
             auto at = std::ptrdiff_t(first);
             auto rm = std::ptrdiff_t(remove_count);
             mapping_table_.erase(mapping_table_.begin() + at, mapping_table_.begin() + at + rm);

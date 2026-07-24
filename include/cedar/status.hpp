@@ -1,5 +1,5 @@
-/* 
-* status.hpp - The error handling foundation
+/*
+* status.hpp - The error handling foundation + the primitive aliases
 */
 
 #pragma once
@@ -7,8 +7,13 @@
 #include <new>
 #include <type_traits>
 #include <utility>
+#include <cstdint>
 
 namespace li {
+
+using Key = std::uint64_t;
+using Rank = std::uint64_t;
+using Payload = std::uint64_t;
 
 enum class Status {
     ok,
@@ -21,8 +26,7 @@ enum class Status {
 template <class T>
 class [[nodiscard]] Result {
 public:
-    
-    // On success, carry a value
+
     Result(T value) noexcept(std::is_nothrow_move_constructible_v<T>) : has_value_(true) {
         new (&storage_.value) T(std::move(value));
     }
@@ -102,20 +106,29 @@ private:
 
 }
 
-#if defined(LI_INVARIANT_CHECKS)
-#include <cstdio>
-#include <cstdlib>
-#define LI_ASSERT(cond) \
-    do { \
-        if (!(cond)) { \
-            std::fprintf(stderr, "LI_ASSERT failed: %s\n at %s:%d\n", \
-                #cond, __FILE__, __LINE__); \
-            std::abort(); \
-        } \
-    } while (0)
+#if defined(CEDAR_INVARIANT_CHECKS)
+    #include <cstdio>
+    #include <cstdlib>
+    #define CEDAR_ASSERT(cond) \
+        do { \
+            if (!(cond)) { \
+                std::fprintf(stderr, "CEDAR_ASSERT failed: %s\n at %s:%d\n", \
+                    #cond, __FILE__, __LINE__); \
+                std::abort(); \
+            } \
+        } while (0)
 #else
-#define LI_ASSERT(cond) ((void)0)
+    #define CEDAR_ASSERT(cond) ((void)0)
 #endif
 
 
-
+#include <cstdio>
+#include <cstdlib>
+#define CEDAR_CHECK(cond, fmt, ...) \
+    do { \
+        if (!(cond)) { \
+            std::fprintf(stderr, "CEDAR_CHECK failed: " fmt "\n at %s:%d\n", \
+                ##__VA_ARGS__, __FILE__, __LINE__); \
+            std::abort(); \
+        } \
+    } while (0)

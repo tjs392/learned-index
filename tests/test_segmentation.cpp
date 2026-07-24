@@ -1,173 +1,262 @@
+// test_segmentation.cpp - the cone against brute force: accepted prefixes must
+// carry an eps-valid model, rejects must be real splits, reset must equal a
+// fresh cone, and the greedy cover must be maximal
+
 #include <gtest/gtest.h>
-#include "li/segmentation.hpp"
-#include "li/model.hpp"
+
+#include "cedar/segmentation.hpp"
 
 #include <vector>
-#include <cmath>
-#include <cstdint>
 #include <random>
+#include <cmath>
+#include <algorithm>
+
+using namespace li;
+using li::detail::StreamingCone;
+using li::detail::FittedSegment;
+using li::detail::LineCoverStatus;
 
 namespace {
 
-using li::detail::FittedSegment;
-using li::detail::segment_stream;
+constexpr double kSlack = 1e-6;
 
-std::vector<li::Key> random_keys(std::mt19937_64& rng, uint64_t n, uint64_t max_gap) {
-    std::vector<li::Key> keys;
-    keys.reserve(n);
-    std::uniform_int_distribution<uint64_t> gap(1, max_gap);
-    uint64_t k = gap(rng);
-    for (uint64_t i = 0; i < n; ++i) {
-        keys.push_back(k);
-        k += gap(rng);
+double max_abs_dev(const LinearModel& m, Key key_low,
+                   const std::vector<Key>& keys, std::size_t begin, std::size_t end) {
+    double worst = 0.0;
+
+    for (std::size_t i = begin; i < end; ++i) {
+        const double dev = line_at(m, keys[i], key_low) - double(i - begin);
+        worst = std::max(worst, std::fabs(dev));
     }
+
+    return worst;
+}
+
+std::vector<Key> random_stream(std::mt19937_64& rng, std::size_t n, int shape) {
+    std::vector<Key> keys;
+    Key k = 1 + rng() % 1000;
+
+    for (std::size_t i = 0; i < n; ++i) {
+        keys.push_back(k);
+
+        if (shape == 0) k += 1 + rng() % 40;
+        else if (shape == 1) k += (i % 40 < 36) ? 1 + rng() % 3 : 300 + rng() % 3000;
+        else k += (rng() % 12 == 0) ? 1 + rng() % 100000 : 1 + rng() % 10;
+    }
+
     return keys;
 }
 
-void check_all_keys_within_eps(const std::vector<li::Key>& keys, double eps) {
-    auto specs = segment_stream(keys, eps);
-
-    uint64_t total = 0;
-    uint64_t expected_base = 0;
-    for (const auto& s : specs) {
-        EXPECT_EQ(s.base_rank, expected_base)
-            << "segment base_rank not contiguous";
-        EXPECT_GT(s.count, 0u) << "empty segment emitted";
-        expected_base += s.count;
-        total += s.count;
-    }
-    EXPECT_EQ(total, keys.size()) << "segments do not cover all keys";
-
-    uint64_t gi = 0;
-    for (const auto& s : specs) {
-        for (uint64_t local = 0; local < s.count; ++local, ++gi) {
-            const li::Key k = keys[gi];
-            const double x = static_cast<double>(k - s.key_low);
-            const double local_pred = s.model.alpha * x + s.model.beta;
-            const double global_pred = static_cast<double>(s.base_rank) + local_pred;
-            const double residual = std::fabs(global_pred - static_cast<double>(gi));
-            EXPECT_LE(residual, eps + 1e-9)
-                << "key " << k << " at global rank " << gi
-                << " predicted " << global_pred
-                << " (residual " << residual << " > eps " << eps << ")";
-        }
-    }
 }
 
-bool brute_coverable(const std::vector<li::Key>& keys,
-                     uint64_t a, uint64_t b, double eps) {
-    double kl = static_cast<double>(keys[a]);
-    double rho_lo = -1e300, rho_hi = 1e300;
-    for (uint64_t i = a; i <= b; ++i) {
-        for (uint64_t j = i + 1; j <= b; ++j) {
-            double xi = static_cast<double>(keys[i]) - kl, yi = static_cast<double>(i - a);
-            double xj = static_cast<double>(keys[j]) - kl, yj = static_cast<double>(j - a);
-            double dx = xj - xi;
-            if (dx <= 0) continue;
-            double hi = ((yj + eps) - (yi - eps)) / dx;
-            double lo = ((yj - eps) - (yi + eps)) / dx;
-            if (hi < rho_hi) rho_hi = hi;
-            if (lo > rho_lo) rho_lo = lo;
-        }
-    }
-    return rho_lo <= rho_hi + 1e-12;
+TEST(Segmentation, PredictClampsAtZero) {
+    const LinearModel m{ 1.0, -5.0 };
+
+    EXPECT_EQ(predict(m, 100, 100), 0u);
+    EXPECT_EQ(predict(m, 110, 100), 5u);
+    EXPECT_EQ(line_at(m, 110, 100), 5.0);
 }
 
-uint64_t brute_segment_count(const std::vector<li::Key>& keys, double eps) {
-    if (keys.empty()) return 0;
-    uint64_t segs = 0, a = 0, n = keys.size();
-    while (a < n) {
-        uint64_t b = a;
-        while (b + 1 < n && brute_coverable(keys, a, b + 1, eps)) ++b;
-        ++segs;
-        a = b + 1;
-    }
-    return segs;
-}
+TEST(Segmentation, AcceptedPrefixAlwaysHasEpsValidModel) {
+    std::mt19937_64 rng(21);
 
-void check_minimal(const std::vector<li::Key>& keys, double eps) {
-    uint64_t fast = segment_stream(keys, eps).size();
-    uint64_t opt  = brute_segment_count(keys, eps);
-    EXPECT_EQ(fast, opt)
-        << "segment count not optimal: got " << fast << ", optimal is " << opt
-        << " (eps=" << eps << ")";
-}
-TEST(Segmentation, ExactLineIsOneSegment) {
-    std::vector<li::Key> keys;
-    for (uint64_t i = 0; i < 100; ++i) keys.push_back(1000 + i);
-    check_all_keys_within_eps(keys, 4.0);
-    EXPECT_EQ(segment_stream(keys, 4.0).size(), 1u);
-}
+    for (int trial = 0; trial < 60; ++trial) {
+        const double eps = (trial % 3 == 0) ? 0.5 : double(1 + rng() % 64);
+        const std::vector<Key> keys = random_stream(rng, 200, trial % 3);
 
-TEST(Segmentation, CurvedDataStillWithinEps) {
-    std::vector<li::Key> keys;
-    uint64_t k = 0;
-    for (uint64_t i = 0; i < 500; ++i) {
-        k += 1 + (i / 50);
-        keys.push_back(k);
-    }
-    check_all_keys_within_eps(keys, 8.0);
-}
+        StreamingCone cone(keys[0], eps);
+        std::size_t accepted = 0;
 
-TEST(Segmentation, TightEpsManySegments) {
-    std::vector<li::Key> keys;
-    uint64_t k = 0;
-    for (uint64_t i = 0; i < 300; ++i) {
-        k += 1 + (i % 7);
-        keys.push_back(k);
-    }
-    check_all_keys_within_eps(keys, 0.5);
-}
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (!cone.try_extend(keys[i], accepted)) break;
+            ++accepted;
 
-TEST(Segmentation, SingleAndTwoKey) {
-    check_all_keys_within_eps({42}, 4.0);
-    check_all_keys_within_eps({42, 99}, 4.0);
-}
+            if (accepted % 17 == 0) {
+                const FittedSegment spec = cone.finalize();
 
-TEST(Segmentation, Empty) {
-    EXPECT_TRUE(segment_stream({}, 4.0).empty());
-}
-
-TEST(Segmentation, MinimalOnExactLine)  { std::vector<li::Key> k; for (uint64_t i=0;i<100;++i) k.push_back(1000+i); check_minimal(k, 4.0); }
-TEST(Segmentation, MinimalOnCurved)     { std::vector<li::Key> k; uint64_t v=0; for (uint64_t i=0;i<200;++i){v+=1+(i/40);k.push_back(v);} check_minimal(k, 8.0); }
-TEST(Segmentation, MinimalOnSawtooth)   { std::vector<li::Key> k; uint64_t v=0; for (uint64_t i=0;i<200;++i){v+=1+(i%13);k.push_back(v);} check_minimal(k, 2.0); }
-TEST(Segmentation, MinimalTightEps)     { std::vector<li::Key> k; uint64_t v=0; for (uint64_t i=0;i<150;++i){v+=1+(i%7);k.push_back(v);} check_minimal(k, 0.5); }
-TEST(Segmentation, MinimalAcrossEps) {
-    std::vector<li::Key> k; uint64_t v=0;
-    for (uint64_t i=0;i<300;++i){ v += 1 + ((i*2654435761u) >> 29); k.push_back(v); }
-    for (double eps : {0.0, 0.5, 1.0, 2.0, 4.0}) check_minimal(k, eps);
-
-}
-
-TEST(Segmentation, RandomizedMinimality) {
-    std::mt19937_64 rng(0xC0FFEE);
-
-    const uint64_t sizes[]    = {1, 2, 5, 20, 80, 200};
-    const uint64_t max_gaps[] = {1, 3, 10, 50, 500};
-    const double   epsilons[] = {0.0, 0.5, 1.0, 2.0, 8.0};
-
-    int trials_per_config = 50;
-
-    for (uint64_t n : sizes) {
-        for (uint64_t g : max_gaps) {
-            for (double eps : epsilons) {
-                for (int t = 0; t < trials_per_config; ++t) {
-                    auto keys = random_keys(rng, n, g);
-                    uint64_t fast = segment_stream(keys, eps).size();
-                    uint64_t opt  = brute_segment_count(keys, eps);
-                    ASSERT_EQ(fast, opt)
-                        << "NON-OPTIMAL: n=" << n << " max_gap=" << g
-                        << " eps=" << eps << " trial=" << t
-                        << " -> fast=" << fast << " opt=" << opt
-                        << "\nkeys: " << [&]{
-                               std::string s;
-                               for (auto k : keys) { s += std::to_string(k); s += ' '; }
-                               return s;
-                           }();
-                }
+                EXPECT_LE(max_abs_dev(spec.model, keys[0], keys, 0, accepted), eps + kSlack);
             }
         }
+
+        ASSERT_GT(accepted, 0u);
+
+        const FittedSegment spec = cone.finalize();
+
+        EXPECT_EQ(spec.count, accepted);
+        EXPECT_EQ(spec.key_low, keys[0]);
+        EXPECT_EQ(spec.first_key, keys[0]);
+        EXPECT_EQ(spec.last_key, keys[accepted - 1]);
+        EXPECT_LE(max_abs_dev(spec.model, keys[0], keys, 0, accepted), eps + kSlack);
+
+        if (::testing::Test::HasFailure()) return;
     }
 }
 
+TEST(Segmentation, RejectMeansNoSingleLineExists) {
+    std::mt19937_64 rng(22);
+
+    for (int trial = 0; trial < 60; ++trial) {
+        const double eps = double(1 + rng() % 8);
+        const std::vector<Key> keys = random_stream(rng, 300, trial % 3);
+
+        StreamingCone cone(keys[0], eps);
+        std::size_t accepted = 0;
+
+        while (accepted < keys.size() && cone.try_extend(keys[accepted], accepted)) ++accepted;
+
+        if (accepted == keys.size()) continue;
+
+        std::span<const Key> broken(keys.data(), accepted + 1);
+
+        EXPECT_EQ(detail::minimal_line_cover(broken, eps).status, LineCoverStatus::SPLIT);
+
+        std::span<const Key> fine(keys.data(), accepted);
+
+        EXPECT_EQ(detail::minimal_line_cover(fine, eps).status, LineCoverStatus::COVERABLE);
+
+        if (::testing::Test::HasFailure()) return;
+    }
+}
+
+TEST(Segmentation, ResetIsEquivalentToFreshCone) {
+    std::mt19937_64 rng(23);
+
+    for (int trial = 0; trial < 40; ++trial) {
+        const double eps = (trial % 2 == 0) ? 0.5 : 4.0;
+        const std::vector<Key> keys = random_stream(rng, 400, trial % 3);
+
+        StreamingCone reused(keys[0], eps);
+        std::size_t segment_start = 0;
+
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            const std::uint64_t local = i - segment_start;
+
+            if (reused.try_extend(keys[i], local)) continue;
+
+            StreamingCone fresh(keys[segment_start], eps);
+
+            for (std::size_t j = segment_start; j < i; ++j) {
+                ASSERT_TRUE(fresh.try_extend(keys[j], j - segment_start));
+            }
+
+            EXPECT_FALSE(fresh.try_extend(keys[i], local));
+
+            const LinearModel a = reused.finalize().model;
+            const LinearModel b = fresh.finalize().model;
+
+            EXPECT_EQ(a.alpha, b.alpha);
+            EXPECT_EQ(a.beta, b.beta);
+
+            segment_start = i;
+            reused.reset(keys[i]);
+            ASSERT_TRUE(reused.try_extend(keys[i], 0));
+        }
+
+        if (::testing::Test::HasFailure()) return;
+    }
+}
+
+TEST(Segmentation, SegmentStreamPartitionsAndIsGreedyMaximal) {
+    std::mt19937_64 rng(24);
+
+    for (int trial = 0; trial < 40; ++trial) {
+        const double eps = double(1 + rng() % 16);
+        const std::vector<Key> keys = random_stream(rng, 500, trial % 3);
+
+        const std::vector<FittedSegment> specs = detail::segment_stream(keys, eps);
+
+        ASSERT_FALSE(specs.empty());
+
+        std::size_t covered = 0;
+
+        for (std::size_t s = 0; s < specs.size(); ++s) {
+            const FittedSegment& sp = specs[s];
+
+            EXPECT_EQ(sp.base_rank, covered);
+            ASSERT_GT(sp.count, 0u);
+            EXPECT_EQ(sp.key_low, keys[covered]);
+            EXPECT_EQ(sp.first_key, keys[covered]);
+            EXPECT_EQ(sp.last_key, keys[covered + sp.count - 1]);
+            EXPECT_LE(max_abs_dev(sp.model, sp.key_low, keys, covered, covered + sp.count),
+                      eps + kSlack);
+
+            if (s + 1 < specs.size()) {
+                StreamingCone cone(sp.key_low, eps);
+
+                for (std::size_t j = 0; j < sp.count; ++j) {
+                    ASSERT_TRUE(cone.try_extend(keys[covered + j], j));
+                }
+
+                EXPECT_FALSE(cone.try_extend(keys[covered + sp.count], sp.count));
+            }
+
+            covered += sp.count;
+        }
+
+        EXPECT_EQ(covered, keys.size());
+
+        if (::testing::Test::HasFailure()) return;
+    }
+}
+
+TEST(Segmentation, MinimalLineCoverPiecesPartitionAndFit) {
+    std::mt19937_64 rng(25);
+
+    for (int trial = 0; trial < 40; ++trial) {
+        const double eps = double(1 + rng() % 16);
+        const std::vector<Key> keys = random_stream(rng, 400, trial % 3);
+
+        const auto result = detail::minimal_line_cover(keys, eps);
+
+        std::size_t covered = 0;
+
+        for (const auto& piece : result.pieces) {
+            EXPECT_EQ(piece.begin, covered);
+            ASSERT_GT(piece.end, piece.begin);
+            EXPECT_LE(max_abs_dev(piece.model, keys[piece.begin], keys, piece.begin, piece.end),
+                      eps + kSlack);
+            covered = piece.end;
+        }
+
+        EXPECT_EQ(covered, keys.size());
+
+        if (result.status == LineCoverStatus::COVERABLE) {
+            EXPECT_EQ(result.pieces.size(), 1u);
+            EXPECT_EQ(result.model.alpha, result.pieces.front().model.alpha);
+            EXPECT_EQ(result.model.beta, result.pieces.front().model.beta);
+        } else {
+            EXPECT_GT(result.pieces.size(), 1u);
+        }
+
+        if (::testing::Test::HasFailure()) return;
+    }
+}
+
+TEST(Segmentation, ExactAffineStreamNeedsZeroEps) {
+    std::vector<Key> keys;
+
+    for (Key i = 0; i < 300; ++i) keys.push_back(1000 + 7 * i);
+
+    EXPECT_EQ(detail::minimal_line_cover(keys, 0.0).status, LineCoverStatus::COVERABLE);
+
+    keys[150] += 3;
+    std::sort(keys.begin(), keys.end());
+
+    EXPECT_EQ(detail::minimal_line_cover(keys, 0.0).status, LineCoverStatus::SPLIT);
+}
+
+TEST(Segmentation, FractionalEpsIsExact) {
+    std::mt19937_64 rng(26);
+
+    for (int trial = 0; trial < 30; ++trial) {
+        const std::vector<Key> keys = random_stream(rng, 300, trial % 3);
+        const auto result = detail::minimal_line_cover(keys, 0.5);
+
+        for (const auto& piece : result.pieces) {
+            EXPECT_LE(max_abs_dev(piece.model, keys[piece.begin], keys, piece.begin, piece.end),
+                      0.5 + kSlack);
+        }
+
+        if (::testing::Test::HasFailure()) return;
+    }
 }

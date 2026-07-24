@@ -26,7 +26,7 @@
 #include <memory>
 #include <type_traits>
 
-#if defined(LI_PHASE_TIMING)
+#if defined(CEDAR_PHASE_TIMING)
 #include <chrono>
     namespace li::detail::store_phase {
     enum Q { 
@@ -59,11 +59,11 @@
     }
     }
 
-    #define LI_PP_CAT2(a, b) a##b
-    #define LI_PP_CAT(a, b) LI_PP_CAT2(a, b)
-    #define LI_STORE_PHASE(q) ::li::detail::store_phase::QScope LI_PP_CAT(_li_qs_, __LINE__)(::li::detail::store_phase::q)
+    #define CEDAR_PP_CAT2(a, b) a##b
+    #define CEDAR_PP_CAT(a, b) CEDAR_PP_CAT2(a, b)
+    #define CEDAR_STORE_PHASE(q) ::li::detail::store_phase::QScope CEDAR_PP_CAT(_li_qs_, __LINE__)(::li::detail::store_phase::q)
 #else
-    #define LI_STORE_PHASE(q) ((void)0)
+    #define CEDAR_STORE_PHASE(q) ((void)0)
 #endif
 
 namespace li::detail {
@@ -109,14 +109,14 @@ public:
     static SegmentStore bulk_load(std::span<const Key> keys, 
                                   std::span<const Payload> payloads,
                                   std::size_t max_capacity_slots) {
-        LI_ASSERT(keys.size() == payloads.size());
+        CEDAR_ASSERT(keys.size() == payloads.size());
 
         SegmentStore block;
         block.max_capacity_ = max_capacity_slots;
         block.capacity_ = choose_capacity(keys.size(), max_capacity_slots);
 
 
-        LI_CHECK(keys.size() <= block.capacity_,
+        CEDAR_CHECK(keys.size() <= block.capacity_,
                  "SegmentStore::bulk_load: %zu keys > %zu slots (ceiling clamp; w_s >= w_m violated "
                  "or an install site overflowed the cap)",
                  keys.size(), block.capacity_);
@@ -138,7 +138,7 @@ public:
     bool empty() const { return count_ == 0; }
 
     Key max_key() const {
-        LI_ASSERT(count_ > 0);
+        CEDAR_ASSERT(count_ > 0);
 
         return key_data()[count_ - 1];
     }
@@ -148,12 +148,12 @@ public:
     std::size_t slot_of_rank(Rank rank) const { return rank < count_ ? std::size_t(rank) : capacity_; }
 
     Key key_at(std::size_t slot) const {
-        LI_ASSERT(slot < count_);
+        CEDAR_ASSERT(slot < count_);
         return key_data()[slot];
     }
 
     Payload payload_at(std::size_t slot) const {
-        LI_ASSERT(slot < count_);
+        CEDAR_ASSERT(slot < count_);
         return payload_data()[slot];
     }
 
@@ -180,7 +180,7 @@ public:
     }
 
     std::optional<std::size_t> find_in(Key key, std::size_t lo_slot, std::size_t hi_slot) const {
-        LI_ASSERT(lo_slot <= hi_slot && hi_slot < capacity_);
+        CEDAR_ASSERT(lo_slot <= hi_slot && hi_slot < capacity_);
 
         const std::size_t hi = hi_slot < count_ ? hi_slot : (count_ ? count_ - 1 : 0);
 
@@ -196,23 +196,23 @@ public:
         std::size_t pos;
 
         {
-            LI_STORE_PHASE(kLowerBound);
+            CEDAR_STORE_PHASE(kLowerBound);
             pos = lower_bound(key);
         }
 
         if (pos == capacity_) pos = count_;
 
-        LI_ASSERT(pos == count_ || key_data()[pos] != key);
+        CEDAR_ASSERT(pos == count_ || key_data()[pos] != key);
 
         if (count_ == capacity_ && !grow()) {
-            LI_CHECK(false,
+            CEDAR_CHECK(false,
                      "SegmentStore::insert past the ceiling (count=%zu == max_capacity=%zu): "
                      "caller must cap-split at count > w_s",
                      count_, max_capacity_);
         }
 
         {
-            LI_STORE_PHASE(kSpread);
+            CEDAR_STORE_PHASE(kSpread);
 
             if (pos < count_) {
                 std::memmove(key_data() + pos + 1, key_data() + pos, (count_ - pos) * sizeof(Key));
@@ -229,10 +229,10 @@ public:
     }
 
     EditResult append(Key key, Payload payload) {
-        LI_ASSERT(count_ == 0 || key > key_data()[count_ - 1]);
+        CEDAR_ASSERT(count_ == 0 || key > key_data()[count_ - 1]);
 
         if (count_ == capacity_ && !grow()) {
-            LI_CHECK(false,
+            CEDAR_CHECK(false,
                      "SegmentStore::append past the ceiling (count=%zu == max_capacity=%zu): "
                      "caller must cap-split at count > w_s",
                      count_, max_capacity_);
@@ -279,10 +279,10 @@ public:
     }
 
     void check_invariants() const {
-        LI_ASSERT(count_ <= capacity_);
-        LI_ASSERT(capacity_ <= std::max(max_capacity_, kMinCapacity));
+        CEDAR_ASSERT(count_ <= capacity_);
+        CEDAR_ASSERT(capacity_ <= std::max(max_capacity_, kMinCapacity));
 
-        for (std::size_t slot = 1; slot < count_; ++slot) LI_ASSERT(key_data()[slot] > key_data()[slot - 1]);
+        for (std::size_t slot = 1; slot < count_; ++slot) CEDAR_ASSERT(key_data()[slot] > key_data()[slot - 1]);
     }
 
 
@@ -297,8 +297,8 @@ public:
                                    std::span<const Key> k2, 
                                    std::span<const Payload> p2,
                                    std::size_t max_capacity_slots) {
-        LI_ASSERT(k1.size() == p1.size() && k2.size() == p2.size());
-        LI_ASSERT(k1.empty() || k2.empty() || k1.back() < k2.front());
+        CEDAR_ASSERT(k1.size() == p1.size() && k2.size() == p2.size());
+        CEDAR_ASSERT(k1.empty() || k2.empty() || k1.back() < k2.front());
 
         const std::size_t total = k1.size() + k2.size();
 
@@ -306,7 +306,7 @@ public:
         block.max_capacity_ = max_capacity_slots;
         block.capacity_ = choose_capacity(total, max_capacity_slots);
 
-        LI_CHECK(total <= block.capacity_,
+        CEDAR_CHECK(total <= block.capacity_,
                  "SegmentStore::bulk_load2: %zu keys > %zu slots (ceiling clamp; w_s >= w_m violated "
                  "or an install site overflowed the cap)",
                  total, block.capacity_);
@@ -347,11 +347,11 @@ private:
     static constexpr std::size_t kMinCapacity = 16;
 
 
-    #ifndef LI_DENSE_TARGET_FILL
-        #define LI_DENSE_TARGET_FILL 0.90
+    #ifndef CEDAR_DENSE_TARGET_FILL
+        #define CEDAR_DENSE_TARGET_FILL 0.90
     #endif
 
-    static constexpr double kTargetFill = LI_DENSE_TARGET_FILL;
+    static constexpr double kTargetFill = CEDAR_DENSE_TARGET_FILL;
 
     static std::size_t choose_capacity(std::size_t count, std::size_t max_capacity_slots) {
         std::size_t needed = (count == 0) ? kMinCapacity : std::size_t(std::ceil(double(count) / kTargetFill));
@@ -365,7 +365,7 @@ private:
     void alloc_fresh(std::size_t cap) { buf_.resize(2 * cap); }
 
     void resize_to(std::size_t new_capacity) {
-        LI_ASSERT(new_capacity >= count_);
+        CEDAR_ASSERT(new_capacity >= count_);
 
         if (new_capacity > capacity_) {
             // note; vector::resize rounds capacity up and quietly turns any grow factor under 2x back into 2x
